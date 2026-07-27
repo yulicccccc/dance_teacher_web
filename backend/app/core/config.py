@@ -20,8 +20,10 @@ MAX_FILE_MB = 500
 MAX_DURATION_SEC = 600  # 10 minutes
 ALLOWED_EXTENSIONS = (".mp4", ".webm", ".mov")
 
-# CORS: dev server runs on Vite's default port.
-CORS_ORIGINS = [
+# CORS: dev server runs on Vite's default port. Override via the CORS_ORIGINS
+# env var (comma-separated) when deployed, e.g. the Cloudflare Pages URL.
+_CORS_ENV = os.getenv("CORS_ORIGINS", "")
+CORS_ORIGINS = [o.strip() for o in _CORS_ENV.split(",") if o.strip()] or [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]

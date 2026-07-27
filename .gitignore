@@ -7,6 +7,8 @@ node_modules/
 dist/
 build/
 frontend/dist/
+*.tsbuildinfo
+tsconfig.tsbuildinfo
 
 # Local data / runtime
 backend/data/
