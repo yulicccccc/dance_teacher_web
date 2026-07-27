@@ -1,0 +1,10 @@
+# Don't bloat the image with local venv / runtime data / caches
+backend/.venv
+backend/.venv*
+backend/venv
+backend/data
+**/__pycache__
+*.pyc
+.pytest_cache
+.git
+.workbuddy
