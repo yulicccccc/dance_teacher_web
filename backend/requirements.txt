@@ -1,0 +1,13 @@
+# Dance Teacher — backend dependencies (Phase 1 MVP)
+# Install: pip install -r requirements.txt
+# NOTE: librosa pulls in numba/llvmlite which may need a compiler to build wheels;
+#       prebuilt wheels are usually available for common platforms.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+librosa>=0.10
+numpy>=1.26
+python-multipart>=0.0.9
+ffmpeg-python>=0.2
+pydantic>=2
+pydantic-settings>=2
+soundfile>=0.12

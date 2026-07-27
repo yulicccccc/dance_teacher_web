@@ -1,0 +1,66 @@
+%% ① 上传 → beat 检测/分段 → 前端轮询 → 教学页
+sequenceDiagram
+    actor U as 用户
+    participant UP as UploadPage
+    participant C as ApiClient
+    participant API as FastAPI
+    participant TM as TaskManager
+    participant AE as AudioExtractor
+    participant BD as BeatDetector
+    participant SG as Segmenter
+    participant AP as AnalysisPage
+    participant LP as LessonPage
+
+    U->>UP: 选择视频 / 粘贴链接
+    UP->>C: upload(file/url)
+    C->>API: POST /api/v1/upload
+    API->>TM: create_task()
+    TM-->>API: {taskId, status:queued}
+    API-->>C: {taskId}
+    C-->>UP: 跳转 AnalysisPage(taskId)
+
+    TM->>AE: extract(video) [后台异步]
+    AE-->>TM: wav_path (status=extracting)
+    TM->>BD: detect(wav) (status=beat_detecting)
+    BD-->>TM: bpm, confidence, beat_times
+    TM->>SG: aggregate(beat_times) (status=segmenting)
+    SG-->>TM: segments[]
+    TM-->>TM: result = AnalysisResult (status=done)
+
+    AP->>C: poll(taskId) [每 ~1s]
+    C->>API: GET /api/v1/analysis/{taskId}
+    API-->>C: {status, progress, result?}
+    C-->>AP: 渲染四步进度
+    Note over AP: status=done 自动跳转
+    AP->>LP: 进入 LessonPage(taskId)
+    LP->>C: getResult(taskId)
+    C->>API: GET /api/v1/analysis/{taskId}/result
+    API-->>C: AnalysisResult
+    C-->>LP: 渲染 SegmentList / VideoPlayer / BeatOverlay
+
+%% ② 播放时 currentTime 驱动节拍叠加（运行时，rAF 驱动）
+sequenceDiagram
+    participant V as VideoPlayer(video)
+    participant H as useBeatSync(rAF)
+    participant S as LessonStore
+    participant O as BeatOverlay
+    participant U as 用户
+
+    U->>V: 播放 / 点击小节
+    V->>S: setSegment(i) / play
+    loop 每帧 requestAnimationFrame
+        H->>V: currentTime (cur)
+        H->>H: segment = find(start<=cur<end)
+        H->>H: beatIdx = count(beats<=cur)
+        H->>O: 渲染 beatIdx (1..8)
+        loop 每个 beatT in segment.beats
+            alt prev < beatT <= cur
+                H->>O: pulse(beatIdx)
+            end
+        end
+        alt loopSegment && cur >= segment.endTime
+            H->>V: currentTime = segment.startTime
+        end
+        H->>H: prev = cur
+    end
+    Note over H,O: 慢放(playbackRate) 不改变拍点时间戳，脉冲随慢放变慢

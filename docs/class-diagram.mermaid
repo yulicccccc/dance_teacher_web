@@ -1,0 +1,85 @@
+classDiagram
+    class AnalysisResult {
+        +str taskId
+        +str videoName
+        +float bpm
+        +float confidence
+        +float duration
+        +str createdAt
+        +Segment[] segments
+    }
+    class Segment {
+        +int index
+        +float startTime
+        +float endTime
+        +str type
+        +float[] beats
+    }
+    class AnalysisTask {
+        +str taskId
+        +str status
+        +int progress
+        +AnalysisResult result
+        +str error
+    }
+    class TaskManager {
+        +create_task(file_or_url) str
+        +get_status(taskId) AnalysisTask
+        +retry(taskId) void
+        -_run_pipeline(taskId) void
+    }
+    class AudioExtractor {
+        +extract(video_path) str
+    }
+    class BeatDetector {
+        +detect(wav_path) tuple
+    }
+    class Segmenter {
+        +aggregate(beat_times, duration) Segment[]
+    }
+    class ApiClient {
+        +upload(file_or_url) TaskStatus
+        +poll(taskId) TaskStatus
+        +getResult(taskId) AnalysisResult
+    }
+    class LocalProgressStore {
+        +save(videoId, data) void
+        +load(videoId) ProgressData
+        +markLearned(videoId, seg) void
+    }
+    class LessonStore {
+        +int currentSegment
+        +float playbackRate
+        +bool mirror
+        +bool loopSegment
+        +setSegment(i) void
+    }
+    class UseBeatSync {
+        +start(video) void
+        +int beatIndex
+        +onPulse(cb) void
+    }
+    class VideoPlayer {
+        +play() void
+        +setRate(r) void
+        +seek(t) void
+        +setMirror(b) void
+    }
+    class BeatOverlay {
+        +render(beatIndex) void
+        +pulse() void
+    }
+
+    AnalysisResult "1" *-- "many" Segment : contains
+    TaskManager "1" *-- "many" AnalysisTask : manages
+    TaskManager ..> AudioExtractor : uses
+    TaskManager ..> BeatDetector : uses
+    TaskManager ..> Segmenter : uses
+    BeatDetector ..> Segmenter : produces beats
+    AudioExtractor ..> BeatDetector : wav
+    ApiClient ..> AnalysisResult : fetches
+    LocalProgressStore ..> AnalysisResult : caches
+    LessonStore ..> AnalysisResult : consumes
+    UseBeatSync ..> VideoPlayer : reads currentTime
+    UseBeatSync ..> BeatOverlay : triggers pulse
+    LessonStore ..> VideoPlayer : controls

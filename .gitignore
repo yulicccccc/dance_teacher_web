@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+frontend/dist/
+
+# Local data / runtime
+backend/data/
+.vite/
+
+# Python venv
+.venv/
+venv/
+.venv*/
+*.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# Assistant workspace memory (never commit)
+.workbuddy/
+
+# Env / secrets
+.env
+.env.*
+*.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
