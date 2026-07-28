@@ -1,5 +1,5 @@
 import type { FFmpeg } from '@ffmpeg/ffmpeg'
-import { loadEssentia, loadFfmpeg } from '../wasm/loaders'
+import { loadEssentia, loadFfmpeg, resetLoaders } from '../wasm/loaders'
 import { extractAudio } from '../audio/extractAudio'
 import { detectBeats } from '../audio/beatDetect'
 import { segmentPhrases, recompute } from '../audio/segmentPhrases'
@@ -128,18 +128,28 @@ export class AnalyzePipeline {
     }
   }
 
-  /** Cancel the in-flight analysis and free ffmpeg's WASM memory. */
+  /** Cancel the in-flight analysis and fully release the ffmpeg instance. */
   cancel(): void {
     this.controller?.abort()
-    this.release()
-  }
-
-  private release(): void {
     try {
       this.ffmpeg?.terminate()
     } catch {
       /* best effort */
     }
+    this.ffmpeg = null
+    // `ffmpeg.terminate()` invalidates the module-level singleton in loaders.ts
+    // without rejecting its cached promise, so the cache would otherwise keep
+    // pointing at a dead instance. Explicitly drop it so the next run() reloads
+    // a fresh engine (fixes the cancel -> retry "ffmpeg terminated" failure).
+    resetLoaders()
+  }
+
+  /**
+   * Release this run's reference to the ffmpeg instance. The module-level
+   * singleton is intentionally kept warm (NOT terminated) so the success path
+   * can reuse it on the next analysis without re-loading the WASM.
+   */
+  private release(): void {
     this.ffmpeg = null
   }
 
