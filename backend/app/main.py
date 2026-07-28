@@ -62,11 +62,49 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-# Optional: serve the built frontend in production (single-port deploy).
-_FRONTEND_DIST = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist"
+# Serve the built frontend from a single port in production, including SPA
+# (client-side) deep links such as /analysis/<id>.
+#
+# On-disk layout:
+#   <project_root>/backend/app/main.py   (this file)
+#   <project_root>/frontend/dist/        (production build output)
+#
+# From this file the project root is three directories up
+# (app -> backend -> <project_root>). The directory can be overridden with the
+# FRONTEND_DIST environment variable for container / custom deployments whose
+# layout differs from the default monorepo structure.
+_FRONTEND_DIST = os.environ.get("FRONTEND_DIST") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "frontend",
+    "dist",
 )
-if os.path.isdir(_FRONTEND_DIST):
-    from fastapi.staticfiles import StaticFiles
 
-    app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="static")
+if os.path.isdir(_FRONTEND_DIST):
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+
+    _DIST_ABS = os.path.abspath(_FRONTEND_DIST)
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str) -> FileResponse:
+        """Serve real static assets, else fall back to index.html.
+
+        API routes declared above take precedence. Any GET path that maps to a
+        real file under the build directory is served directly; every other
+        path (including deep client-side links like /analysis/<id>) returns
+        index.html so the frontend router can resolve it. Path traversal is
+        blocked by verifying the resolved path stays inside the build dir.
+        """
+        if full_path.startswith("api/"):
+            # Unknown API paths must 404 like before, never serve the SPA.
+            raise HTTPException(status_code=404, detail="Not Found")
+
+        candidate = os.path.abspath(os.path.join(_DIST_ABS, full_path))
+        if (
+            full_path
+            and candidate.startswith(_DIST_ABS + os.sep)
+            and os.path.isfile(candidate)
+        ):
+            return FileResponse(candidate)
+        # SPA fallback: index.html for "/" and all unknown non-file paths.
+        return FileResponse(os.path.join(_DIST_ABS, "index.html"))
