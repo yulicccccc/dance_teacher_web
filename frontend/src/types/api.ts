@@ -1,5 +1,9 @@
-// Shared wire types — field names mirror the backend JSON (snake_case).
-// Keep this file in sync with backend/app/schemas/analysis.py.
+// Local, browser-only domain types.
+//
+// The app no longer talks to a backend: audio extraction and beat detection run
+// entirely in the browser (ffmpeg.wasm + essentia.js). These types describe the
+// analysis result produced locally and consumed by the lesson player — there is
+// no server schema to mirror anymore.
 
 export interface Segment {
   index: number // 1-based
@@ -24,6 +28,7 @@ export interface ABLoop {
 }
 
 export interface AnalysisResult {
+  /** Locally-stable id derived from the video file (also the route param). */
   taskId: string
   videoName: string
   bpm: number
@@ -34,36 +39,5 @@ export interface AnalysisResult {
   beatLowConfidence?: boolean
 }
 
-export type TaskStatusValue =
-  | 'queued'
-  | 'extracting'
-  | 'beat_detecting'
-  | 'segmenting'
-  | 'done'
-  | 'failed'
-
-export interface TaskStatus {
-  taskId: string
-  status: TaskStatusValue
-  progress: number // 0~100
-  result: AnalysisResult | null
-  error: string | null
-}
-
-export interface UploadResponse {
-  taskId: string
-  status: string
-}
-
-export interface ApiError {
-  code: string
-  message: string
-  data: null
-}
-
+/** Recompute fallback modes for low-confidence segmentations. */
 export type RecomputeMode = 'auto' | 'fixed120' | 'manual_first_beat'
-
-export interface RecomputeRequest {
-  mode: RecomputeMode
-  firstBeatTime?: number
-}

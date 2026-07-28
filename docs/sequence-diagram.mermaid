@@ -1,66 +1,54 @@
-%% ① 上传 → beat 检测/分段 → 前端轮询 → 教学页
 sequenceDiagram
+    autonumber
     actor U as 用户
     participant UP as UploadPage
-    participant C as ApiClient
-    participant API as FastAPI
-    participant TM as TaskManager
-    participant AE as AudioExtractor
-    participant BD as BeatDetector
-    participant SG as Segmenter
+    participant UPDR as Uploader
+    participant US as UploadSession(store)
     participant AP as AnalysisPage
+    participant UA as useAnalyzer(hook)
+    participant PL as AnalyzePipeline
+    participant WL as WasmLoaders
+    participant AE as AudioExtractor(ffmpeg.wasm)
+    participant BD as BeatDetector(essentia.js)
+    participant PS as PhraseSegmenter
+    participant AS as AnalyzerStore
     participant LP as LessonPage
+    participant LR as useLocalProgress
+    participant VP as VideoPlayer
 
-    U->>UP: 选择视频 / 粘贴链接
-    UP->>C: upload(file/url)
-    C->>API: POST /api/v1/upload
-    API->>TM: create_task()
-    TM-->>API: {taskId, status:queued}
-    API-->>C: {taskId}
-    C-->>UP: 跳转 AnalysisPage(taskId)
+    U->>UPDR: 选择本地视频文件
+    UPDR->>US: setFile(file, objectUrl, videoId)
+    UPDR->>UP: onUploaded(videoId)
+    UP->>AP: navigate(/analyze/:videoId)
+    AP->>UA: start(file)
+    UA->>AS: setPhase('loading_engine'); progress 5
+    UA->>PL: run(file, {signal, onProgress})
+    PL->>WL: loadFfmpeg() / loadEssentia()
+    WL-->>PL: ffmpeg + essentia 实例
+    PL->>AS: setPhase('extracting'); progress 20
+    PL->>AE: extractToMonoWav(file)
+    AE-->>PL: Float32Array(单声道 44.1k)
+    PL->>AS: setPhase('detecting'); progress 55
+    PL->>BD: detect(signal, 44100)
+    BD-->>PL: {bpm, beats[], confidence}
+    PL->>AS: setPhase('segmenting'); progress 85
+    PL->>PS: buildPhrases(beats, duration)
+    PS-->>PL: Segment[] (8拍/节)
+    PL->>AS: setResult(AnalysisResult); setPhase('done'); progress 100
+    AP->>LP: navigate(/lesson/:videoId)
+    LP->>LR: getCourse(videoId) → AnalysisResult + objectUrl
+    LR-->>LP: 课程(含本地保存进度)
+    LP->>VP: src=objectUrl, segments
+    VP->>U: 播放 + 数拍叠加(useBeatSync)
 
-    TM->>AE: extract(video) [后台异步]
-    AE-->>TM: wav_path (status=extracting)
-    TM->>BD: detect(wav) (status=beat_detecting)
-    BD-->>TM: bpm, confidence, beat_times
-    TM->>SG: aggregate(beat_times) (status=segmenting)
-    SG-->>TM: segments[]
-    TM-->>TM: result = AnalysisResult (status=done)
+    Note over U,PL: 取消分支
+    U->>AP: 点击取消
+    AP->>UA: cancel()
+    UA->>PL: terminate() / abort(signal)
+    PL->>AE: ffmpeg.terminate(); 释放 ArrayBuffer
+    PL->>AS: setPhase('cancelled'); 回收 objectUrl
 
-    AP->>C: poll(taskId) [每 ~1s]
-    C->>API: GET /api/v1/analysis/{taskId}
-    API-->>C: {status, progress, result?}
-    C-->>AP: 渲染四步进度
-    Note over AP: status=done 自动跳转
-    AP->>LP: 进入 LessonPage(taskId)
-    LP->>C: getResult(taskId)
-    C->>API: GET /api/v1/analysis/{taskId}/result
-    API-->>C: AnalysisResult
-    C-->>LP: 渲染 SegmentList / VideoPlayer / BeatOverlay
-
-%% ② 播放时 currentTime 驱动节拍叠加（运行时，rAF 驱动）
-sequenceDiagram
-    participant V as VideoPlayer(video)
-    participant H as useBeatSync(rAF)
-    participant S as LessonStore
-    participant O as BeatOverlay
-    participant U as 用户
-
-    U->>V: 播放 / 点击小节
-    V->>S: setSegment(i) / play
-    loop 每帧 requestAnimationFrame
-        H->>V: currentTime (cur)
-        H->>H: segment = find(start<=cur<end)
-        H->>H: beatIdx = count(beats<=cur)
-        H->>O: 渲染 beatIdx (1..8)
-        loop 每个 beatT in segment.beats
-            alt prev < beatT <= cur
-                H->>O: pulse(beatIdx)
-            end
-        end
-        alt loopSegment && cur >= segment.endTime
-            H->>V: currentTime = segment.startTime
-        end
-        H->>H: prev = cur
-    end
-    Note over H,O: 慢放(playbackRate) 不改变拍点时间戳，脉冲随慢放变慢
+    Note over U,PL: 错误分支
+    PL-->>AS: throw AnalysisError{phase, code, message}
+    AS->>AP: setPhase('error'); setError(msg)
+    AP->>U: 展示错误 + 重试按钮 → UA.start(file)

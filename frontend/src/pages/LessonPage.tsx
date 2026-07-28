@@ -12,12 +12,14 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import apiClient, { extractApiError } from '../api/client'
 import { useVideoControls } from '../hooks/useVideoControls'
 import { useBeatSync } from '../hooks/useBeatSync'
 import { usePlayPauseSync } from '../hooks/usePlayPauseSync'
 import { useLocalProgress, type LessonProgress } from '../hooks/useLocalProgress'
 import { useLessonStore } from '../store/lessonStore'
+import { useAnalysisStore } from '../store/analysisStore'
+import { useUploadSession } from '../store/uploadSession'
+import { getVideoUrl } from '../store/videoCache'
 import VideoPlayer from '../components/VideoPlayer'
 import SegmentList from '../components/SegmentList'
 import ControlBar from '../components/ControlBar'
@@ -25,8 +27,23 @@ import ProgressHeader from '../components/ProgressHeader'
 import { resegmentSegments, findBeatAt } from '../utils/segmentMath'
 import { pickChineseVoice } from '../utils/voice'
 import type { AnalysisResult, RecomputeMode } from '../types/api'
+import { AnalyzePipeline } from '../analysis/analyzePipeline'
 
 const CHINESE_NUM = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
+
+function defaultProgress(): LessonProgress {
+  return {
+    currentSegment: 1,
+    playbackRate: 1,
+    mirror: true,
+    loopSegment: false,
+    voiceEnabled: false,
+    beatOffset: 0,
+    learnedSegments: [],
+    abLoop: null,
+    updatedAt: new Date().toISOString(),
+  }
+}
 
 export default function LessonPage() {
   const { taskId } = useParams<{ taskId: string }>()
@@ -37,7 +54,10 @@ export default function LessonPage() {
 
   const { videoRef, play, togglePlay, seek, setRate } = useVideoControls()
   const { ready, getCourse, saveCourse, updateProgress, markLearned } = useLocalProgress()
+  const analysisResult = useAnalysisStore((s) => s.result)
+  const { objectUrl } = useUploadSession()
 
+  const [videoSrc, setVideoSrc] = useState<string | null>(null)
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -88,19 +108,42 @@ export default function LessonPage() {
     abLoop,
   )
 
-  // Fetch result + hydrate progress from local storage.
+  // Resolve the result + video source locally (no backend).
   useEffect(() => {
-    if (!taskId) return
     let cancelled = false
     void (async () => {
       try {
-        const res = await apiClient.getResult(taskId)
-        if (cancelled) return
-        setResult(res)
-        if (ready) {
-          const course = getCourse(videoId)
-          if (course) {
-            const p: LessonProgress = course.progress
+        // 1) result: prefer the in-memory analysis store (same session), else
+        //    the persisted course.
+        const stored =
+          analysisResult && analysisResult.taskId === videoId ? analysisResult : null
+        const course = getCourse(videoId)
+        const res = stored ?? course?.result ?? null
+        if (!res) {
+          if (!cancelled) {
+            setError('未找到该视频的分析结果，请重新上传。')
+            setLoading(false)
+          }
+          return
+        }
+        if (!cancelled) setResult(res)
+
+        // 2) video source: session object URL, else the cached file.
+        if (!cancelled) {
+          if (objectUrl) {
+            setVideoSrc(objectUrl)
+          } else {
+            const cached = await getVideoUrl(videoId)
+            if (cached) setVideoSrc(cached)
+            else if (!cancelled) setError('视频已不在本机，请重新上传以播放。')
+          }
+        }
+
+        // 3) hydrate the lesson-store progress from local storage.
+        if (ready && !cancelled) {
+          const c = getCourse(videoId)
+          if (c) {
+            const p: LessonProgress = c.progress
             useLessonStore.setState({
               currentSegment: p.currentSegment,
               playbackRate: p.playbackRate,
@@ -111,36 +154,31 @@ export default function LessonPage() {
               learnedSegments: p.learnedSegments,
               abLoop: p.abLoop ?? null,
             })
-          } else {
+          } else if (res) {
             await saveCourse(videoId, {
               videoName: res.videoName,
               taskId: res.taskId,
               result: res,
-              progress: {
-                currentSegment: 1,
-                playbackRate: 1,
-                mirror: true,
-                loopSegment: false,
-                voiceEnabled: false,
-                beatOffset: 0,
-                learnedSegments: [],
-                abLoop: null,
-                updatedAt: new Date().toISOString(),
-              },
+              progress: defaultProgress(),
             })
           }
         }
-        if (res.beatLowConfidence) setLowConfOpen(true)
+
+        if (!cancelled) {
+          if (res.beatLowConfidence) setLowConfOpen(true)
+          setLoading(false)
+        }
       } catch (e) {
-        if (!cancelled) setError(extractApiError(e).message)
-      } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setError((e as Error)?.message ?? '加载失败')
+          setLoading(false)
+        }
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [taskId, videoId, ready, getCourse, saveCourse])
+  }, [videoId, analysisResult, objectUrl, ready, getCourse, saveCourse])
 
   // Track real play/pause state for the control-bar icon. `usePlayPauseSync`
   // re-attaches its `play`/`pause` listeners when `segments` flips from `[]`
@@ -157,7 +195,7 @@ export default function LessonPage() {
   // Resume at the saved segment once on load (waits for metadata to seek).
   const didInit = useRef(false)
   useEffect(() => {
-    if (!result || !ready || didInit.current) return
+    if (!result || !ready || didInit.current || !videoSrc) return
     const v = videoRef.current
     if (!v) return
     const seg =
@@ -169,7 +207,7 @@ export default function LessonPage() {
     }
     if (v.readyState >= 1) doSeek()
     else v.addEventListener('loadedmetadata', doSeek, { once: true })
-  }, [result, ready, currentSegment, offsetSegments, seek, videoRef])
+  }, [result, ready, currentSegment, offsetSegments, seek, videoRef, videoSrc])
 
   // Persist progress on any relevant change (breakpoint resume, P0-9).
   useEffect(() => {
@@ -299,18 +337,34 @@ export default function LessonPage() {
     void markLearned(videoId, currentSegment, !learned)
   }
 
+  const persistResult = async (res: AnalysisResult) => {
+    const existing = getCourse(videoId)
+    await saveCourse(videoId, {
+      videoName: res.videoName,
+      taskId: res.taskId,
+      result: res,
+      progress: existing?.progress ?? defaultProgress(),
+    })
+  }
+
+  // Local low-confidence recompute (no backend round-trip).
   const handleRecompute = async (mode: RecomputeMode) => {
-    if (!taskId) return
-    try {
-      const req: { mode: RecomputeMode; firstBeatTime?: number } = { mode }
-      if (mode === 'manual_first_beat') req.firstBeatTime = parseFloat(firstBeat)
-      const res = await apiClient.recompute(taskId, req)
-      setResult(res)
-      setLowConfOpen(false)
-      setSnack('已重新生成分段')
-    } catch (e) {
-      setError(extractApiError(e).message)
+    if (!result) return
+    const flatBeats = result.segments.flatMap((s) => s.beats)
+    const newSegs = AnalyzePipeline.recompute(
+      mode,
+      { bpm: result.bpm, beats: flatBeats, duration: result.duration },
+      parseFloat(firstBeat) || undefined,
+    )
+    const updated: AnalysisResult = {
+      ...result,
+      segments: newSegs,
+      beatLowConfidence: false,
     }
+    setResult(updated)
+    await persistResult(updated)
+    setLowConfOpen(false)
+    setSnack('已重新生成分段')
   }
 
   if (loading) {
@@ -333,7 +387,7 @@ export default function LessonPage() {
   if (!result) return null
 
   const total = offsetSegments.length
-  const videoSrc = `${apiClient.BASE}/video/${taskId}`
+  const src = videoSrc ?? ''
 
   return (
     <Box sx={{ minHeight: '100vh', pb: 6 }}>
@@ -358,7 +412,7 @@ export default function LessonPage() {
           </Box>
           <Box sx={{ flexGrow: 1 }}>
             <VideoPlayer
-              src={videoSrc}
+              src={src}
               mirror={mirror}
               videoRef={videoRef}
               beatIndex={beatIndex}

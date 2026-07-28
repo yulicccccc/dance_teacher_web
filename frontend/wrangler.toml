@@ -1,0 +1,17 @@
+# Cloudflare Pages project configuration.
+#
+# The app is a pure static SPA (Vite build -> dist/). There is no functions/
+# directory and no server runtime. The cross-origin isolation headers
+# (COOP/COEP) that enable ffmpeg.wasm multi-threading live in `public/_headers`,
+# which Vite copies verbatim into `dist/` and Cloudflare Pages serves as-is.
+
+name = "dance-teacher"
+compatibility_date = "2024-09-01"
+
+# Cloudflare Pages reads this to know where the static output lives.
+pages_build_output_dir = "dist"
+
+# Build settings (also configurable in the Pages dashboard). `npm run build`
+# already runs `copy:wasm` via its `prebuild` hook before `vite build`.
+[build]
+command = "npm install && npm run build"

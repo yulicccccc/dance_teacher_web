@@ -6,5 +6,12 @@ backend/data
 **/__pycache__
 *.pyc
 .pytest_cache
+
+# Frontend: the SPA is rebuilt inside the image (frontend-build stage), so we
+# must NOT ship the host's node_modules or a stale dist into the build context.
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
 .git
 .workbuddy

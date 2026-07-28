@@ -5,17 +5,25 @@ import {
   LinearProgress,
   Paper,
   Stack,
-  TextField,
   Typography,
 } from '@mui/material'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
-import LinkIcon from '@mui/icons-material/Link'
-import { http } from '../api/client'
-import type { UploadResponse } from '../types/api'
+import { useUploadSession } from '../store/uploadSession'
+import { cacheVideo } from '../store/videoCache'
+
+const MAX_SIZE = 500 * 1024 * 1024 // 500MB
+const MAX_DURATION = 10 * 60 // 10 minutes
 
 interface Props {
-  onUploaded: (taskId: string, videoId: string) => void
+  onUploaded: (videoId: string) => void
   onError: (msg: string) => void
+}
+
+function computeVideoId(file: File): string {
+  const raw = `${file.name}:${file.size}:${file.lastModified}`
+  let h = 0
+  for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) | 0
+  return `v${h >>> 0}`
 }
 
 function formatSize(bytes: number): string {
@@ -23,76 +31,86 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-/** Stable per-video id so progress survives re-uploads of the same file. */
-function computeVideoId(file: File | null, url: string): string {
-  const raw = file ? `${file.name}:${file.size}:${file.lastModified}` : url || String(Math.random())
-  let h = 0
-  for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) | 0
-  return `v${h >>> 0}`
+/**
+ * Best-effort video duration probe. Returns `null` if metadata can't load
+ * (e.g. in a test environment with no real decoder) so the upload is never
+ * hard-blocked by the probe itself.
+ */
+function getVideoDuration(url: string, timeoutMs = 2000): Promise<number | null> {
+  return new Promise((resolve) => {
+    const v = document.createElement('video')
+    let done = false
+    const finish = (d: number | null) => {
+      if (done) return
+      done = true
+      v.remove()
+      resolve(d)
+    }
+    const t = setTimeout(() => finish(null), timeoutMs)
+    v.preload = 'metadata'
+    v.onloadedmetadata = () => {
+      clearTimeout(t)
+      finish(Number.isFinite(v.duration) ? v.duration : null)
+    }
+    v.onerror = () => {
+      clearTimeout(t)
+      finish(null)
+    }
+    v.src = url
+  })
 }
 
+/**
+ * Local-only uploader. The video never leaves the browser: we compute a stable
+ * `videoId`, cache the `File` in IndexedDB for later replay, store it in the
+ * upload session (which creates a local object URL for playback), then notify
+ * the parent. No HTTP / axios / backend involved.
+ */
 export default function Uploader({ onUploaded, onError }: Props) {
   const [file, setFile] = useState<File | null>(null)
-  const [url, setUrl] = useState('')
-  const [uploading, setUploading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [progress, setProgress] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const setFileSession = useUploadSession((s) => s.setFile)
 
   const handleSelect = (files: FileList | null) => {
     if (files && files.length > 0) {
-      const f = files[0]
-      setFile(f)
-      setUrl('')
+      setFile(files[0])
+      setProgress(0)
     }
   }
 
   const submit = async () => {
-    setUploading(true)
-    setProgress(file ? 0 : 100)
+    if (!file) {
+      onError('请选择一个本地视频文件')
+      return
+    }
+    if (file.size > MAX_SIZE) {
+      onError('视频过大（请控制在 500MB 以内）')
+      return
+    }
+
+    setSubmitting(true)
     try {
-      let resp: UploadResponse
-      if (file) {
-        const form = new FormData()
-        form.append('file', file)
-        const { data } = await http.post<UploadResponse>('/upload', form, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-          // Extended timeout (5 min) covers cold-start wake-up + large upload.
-          timeout: 300000,
-          onUploadProgress: (e) => {
-            if (e.total) setProgress(Math.round((e.loaded / e.total) * 100))
-          },
-        })
-        resp = data
-      } else if (url.trim()) {
-        const { data } = await http.post<UploadResponse>('/upload', { url: url.trim() }, {
-          timeout: 300000,
-        })
-        resp = data
-      } else {
-        onError('请选择本地视频或粘贴视频链接')
-        setUploading(false)
+      const probeUrl = URL.createObjectURL(file)
+      const dur = await getVideoDuration(probeUrl)
+      URL.revokeObjectURL(probeUrl)
+      if (dur != null && dur > MAX_DURATION) {
+        onError('视频过长（请控制在 10 分钟以内）')
+        setSubmitting(false)
         return
       }
-      onUploaded(resp.taskId, computeVideoId(file, url))
+
+      const videoId = computeVideoId(file)
+      // Cache the file so the lesson page can replay it later without re-upload.
+      await cacheVideo(videoId, file)
+      setFileSession(file, videoId, file.name)
+      setProgress(100)
+      onUploaded(videoId)
     } catch (e) {
-      const err = e as {
-        code?: string
-        response?: { data?: { message?: string } }
-        message?: string
-      }
-      const msgLower = (err?.message ?? '').toLowerCase()
-      const isTimeoutOrNetwork =
-        err?.code === 'ECONNABORTED' ||
-        msgLower.includes('timeout') ||
-        msgLower.includes('network')
-      // On timeout / network errors keep the selected file so the user can just
-      // retry without re-picking it.
-      const msg = isTimeoutOrNetwork
-        ? '服务器正在启动或网络较慢，文件已保留，请稍候点击【开始分析】再试一次'
-        : err?.response?.data?.message ?? err?.message ?? '上传失败'
-      onError(msg)
+      onError((e as Error)?.message ?? '无法处理该视频，请重试')
     } finally {
-      setUploading(false)
+      setSubmitting(false)
     }
   }
 
@@ -142,30 +160,24 @@ export default function Uploader({ onUploaded, onError }: Props) {
               （{formatSize(file.size)}）
             </Typography>
           </Stack>
-          {uploading && <LinearProgress variant="determinate" value={progress} sx={{ mt: 1 }} />}
+          {submitting && (
+            <LinearProgress
+              variant={progress > 0 ? 'determinate' : 'indeterminate'}
+              value={progress}
+              sx={{ mt: 1 }}
+            />
+          )}
         </Box>
       )}
-
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ width: '100%' }}>
-        <LinkIcon color="action" />
-        <TextField
-          fullWidth
-          size="small"
-          placeholder="或粘贴视频链接（可选）"
-          value={url}
-          disabled={!!file}
-          onChange={(e) => setUrl(e.target.value)}
-        />
-      </Stack>
 
       <Button
         variant="contained"
         size="large"
-        disabled={uploading || (!file && !url.trim())}
+        disabled={submitting || !file}
         onClick={submit}
         sx={{ minWidth: 200 }}
       >
-        {uploading ? '正在上传…' : '开始分析'}
+        {submitting ? '准备中…' : '开始分析'}
       </Button>
     </Stack>
   )

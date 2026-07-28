@@ -143,3 +143,64 @@ export function findBeatAt(segments: Segment[], time: number): BeatHit | null {
   }
   return found
 }
+
+/**
+ * Options for {@link buildPhrases}.
+ */
+export interface BuildPhrasesOptions {
+  /** Semantic type assigned to every phrase (default `'dance'`). */
+  type?: string
+  /** Beats per phrase (default 8). */
+  beatsPerPhrase?: number
+  /** Drop a trailing partial phrase with fewer than `beatsPerPhrase` beats. */
+  dropPartial?: boolean
+}
+
+/**
+ * Pure phrase builder: group a flat, monotonically increasing beat timeline
+ * into fixed-length (default 8-beat) `Segment`s.
+ *
+ * This is the single source of truth for the *initial* 8-beat segmentation.
+ * `resegmentSegments` (above) then re-cuts the grid when the user shifts the
+ * beat offset, and `segmentPhrases.recompute` re-builds it for the
+ * low-confidence fallbacks. Keeping the grouping math here — and side-effect
+ * free — means every consumer (UI, store, tests) sees the same phrase grid.
+ *
+ * - Phrase `startTime` is the first beat of the group.
+ * - Phrase `endTime` is the first beat of the *next* group, or `duration` for
+ *   the final phrase (so the last phrase spans all the way to the end of the
+ *   media even when trailing partial beats were dropped).
+ * - Beats are carried over verbatim so `useBeatSync` / `resegmentSegments` can
+ *   re-flatten them later.
+ *
+ * Pure and side-effect free — unit-testable without a `<video>` element.
+ */
+export function buildPhrases(
+  beats: number[],
+  duration: number,
+  options: BuildPhrasesOptions = {},
+): Segment[] {
+  const type = options.type ?? 'dance'
+  const per = options.beatsPerPhrase ?? 8
+  const dropPartial = options.dropPartial ?? true
+
+  if (!beats || beats.length === 0 || duration <= 0 || per <= 0) return []
+
+  const fullGroups = dropPartial
+    ? Math.floor(beats.length / per)
+    : Math.ceil(beats.length / per)
+  const result: Segment[] = []
+
+  for (let i = 0; i < fullGroups; i++) {
+    const start = i * per
+    const group = beats.slice(start, start + per)
+    if (group.length === 0) continue
+    const startTime = group[0]
+    // Boundary after this group: first beat of the next group, or — for the
+    // last group — the media duration.
+    const nextStartIdx = start + per
+    const endTime = nextStartIdx < beats.length ? beats[nextStartIdx] : duration
+    result.push({ index: i + 1, startTime, endTime, type, beats: group })
+  }
+  return result
+}

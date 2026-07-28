@@ -1,18 +1,24 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AppBar, Box, Button, Container, Toolbar, Typography } from '@mui/material'
+import {
+  AppBar,
+  Box,
+  Button,
+  Container,
+  Toolbar,
+  Typography,
+} from '@mui/material'
 import Uploader from '../components/Uploader'
-import { apiClient } from '../api/client'
+import { isLikelyDesktop } from '../analysis/crossOrigin'
 
 export default function UploadPage() {
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
-  const [warming, setWarming] = useState(false)
+  const [desktopWarning, setDesktopWarning] = useState(false)
 
   useEffect(() => {
-    // Fire-and-forget backend warm-up (Render cold start). Result is ignored.
-    setWarming(true)
-    void apiClient.warmup().finally(() => setWarming(false))
+    // Soft hint only — the analysis still attempts to run everywhere.
+    setDesktopWarning(!isLikelyDesktop())
   }, [])
 
   return (
@@ -29,18 +35,43 @@ export default function UploadPage() {
         <Typography variant="h4" fontWeight={700} gutterBottom>
           上传你的舞蹈视频
         </Typography>
-        <Typography color="text.secondary" sx={{ mb: 4 }}>
-          上传后网站会自动按 8 拍拆成小节，像舞室老师一样一小节一小节带练。视频仅用于本地学习、不外传。
+        <Typography color="text.secondary" sx={{ mb: 2 }}>
+          上传后网站会自动按 8 拍拆成小节，像舞室老师一样一小节一小节带练。
         </Typography>
-        {warming && (
-          <Typography variant="caption" color="text.secondary" sx={{ mb: 1 }}>
-            正在唤醒服务器…
+
+        <Box
+          sx={{
+            mb: 3,
+            p: 2,
+            borderRadius: 2,
+            bgcolor: 'rgba(34,211,238,0.08)',
+            border: '1px solid',
+            borderColor: 'rgba(34,211,238,0.3)',
+          }}
+        >
+          <Typography variant="body2" color="text.secondary">
+            🔒 隐私说明：视频仅在你的浏览器内处理，不上传任何服务器。
+          </Typography>
+        </Box>
+
+        {desktopWarning && (
+          <Typography
+            variant="caption"
+            color="warning.main"
+            sx={{ display: 'block', mb: 2 }}
+          >
+            建议使用桌面版 Chrome / Edge / Firefox 以获得最佳分析性能（移动端对
+            WASM / SharedArrayBuffer 支持有限）。
           </Typography>
         )}
+
         <Uploader
-          onUploaded={(taskId, videoId) => navigate(`/analyze/${taskId}`, { state: { videoId } })}
+          onUploaded={(videoId) =>
+            navigate(`/analyze/${videoId}`, { state: { videoId } })
+          }
           onError={setError}
         />
+
         {error && (
           <Typography color="error" sx={{ mt: 2 }}>
             {error}

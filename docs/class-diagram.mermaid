@@ -1,85 +1,137 @@
 classDiagram
-    class AnalysisResult {
-        +str taskId
-        +str videoName
-        +float bpm
-        +float confidence
-        +float duration
-        +str createdAt
-        +Segment[] segments
-    }
+    %% ===== 复用（v0.1 已有） =====
     class Segment {
-        +int index
-        +float startTime
-        +float endTime
-        +str type
-        +float[] beats
+        +number index
+        +number startTime
+        +number endTime
+        +string type
+        +number[] beats
     }
-    class AnalysisTask {
-        +str taskId
-        +str status
-        +int progress
-        +AnalysisResult result
-        +str error
+    class ABLoop {
+        +boolean enabled
+        +number aTime
+        +number bTime
+        +number aBeat
+        +number bBeat
     }
-    class TaskManager {
-        +create_task(file_or_url) str
-        +get_status(taskId) AnalysisTask
-        +retry(taskId) void
-        -_run_pipeline(taskId) void
-    }
-    class AudioExtractor {
-        +extract(video_path) str
-    }
-    class BeatDetector {
-        +detect(wav_path) tuple
-    }
-    class Segmenter {
-        +aggregate(beat_times, duration) Segment[]
-    }
-    class ApiClient {
-        +upload(file_or_url) TaskStatus
-        +poll(taskId) TaskStatus
-        +getResult(taskId) AnalysisResult
-    }
-    class LocalProgressStore {
-        +save(videoId, data) void
-        +load(videoId) ProgressData
-        +markLearned(videoId, seg) void
+    class AnalysisResult {
+        +string taskId
+        +string videoName
+        +number bpm
+        +number confidence
+        +number duration
+        +string createdAt
+        +Segment[] segments
+        +boolean beatLowConfidence
     }
     class LessonStore {
-        +int currentSegment
-        +float playbackRate
-        +bool mirror
-        +bool loopSegment
-        +setSegment(i) void
+        <<zustand>>
+    }
+    class UseLocalProgress {
+        <<hook>>
     }
     class UseBeatSync {
-        +start(video) void
-        +int beatIndex
-        +onPulse(cb) void
+        <<hook>>
     }
-    class VideoPlayer {
-        +play() void
-        +setRate(r) void
-        +seek(t) void
-        +setMirror(b) void
-    }
-    class BeatOverlay {
-        +render(beatIndex) void
-        +pulse() void
+    class SegmentMath {
+        <<pure utils>>
+        +resegmentSegments()
+        +findBeatAt()
+        +locateBeat()
+        +computeLoopSegment()
+        +computePaddedLoopBounds()
+        +buildPhrases()
     }
 
-    AnalysisResult "1" *-- "many" Segment : contains
-    TaskManager "1" *-- "many" AnalysisTask : manages
-    TaskManager ..> AudioExtractor : uses
-    TaskManager ..> BeatDetector : uses
-    TaskManager ..> Segmenter : uses
-    BeatDetector ..> Segmenter : produces beats
-    AudioExtractor ..> BeatDetector : wav
-    ApiClient ..> AnalysisResult : fetches
-    LocalProgressStore ..> AnalysisResult : caches
-    LessonStore ..> AnalysisResult : consumes
-    UseBeatSync ..> VideoPlayer : reads currentTime
-    UseBeatSync ..> BeatOverlay : triggers pulse
-    LessonStore ..> VideoPlayer : controls
+    %% ===== 新增（前端化核心） =====
+    class UploadSession {
+        <<zustand>>
+        +File videoFile
+        +string objectUrl
+        +string videoId
+        +string videoName
+        +setFile()
+        +clear()
+    }
+    class WasmLoaders {
+        +loadFfmpeg() Promise~FFmpeg~
+        +loadEssentia() Promise~Essentia~
+        +isMultithread() boolean
+    }
+    class AudioExtractor {
+        +extractToMonoWav(file) Promise~Float32Array~
+    }
+    class BeatDetector {
+        +detect(signal, sr) BeatDetectionResult
+    }
+    class BeatDetectionResult {
+        +number bpm
+        +number[] beats
+        +number confidence
+    }
+    class PhraseSegmenter {
+        +buildPhrases(beats, duration) Segment[]
+        +recompute(mode, firstBeatTime, ctx) Segment[]
+        +buildFixedGrid(bpm, duration) Segment[]
+    }
+    class AnalyzePipeline {
+        +run(file, opts) Promise~AnalysisResult~
+        +cancel() void
+    }
+    class AnalyzerStore {
+        <<zustand>>
+        +enum phase
+        +number progress
+        +AnalysisResult result
+        +string error
+        +setPhase()
+        +setProgress()
+        +setResult()
+        +setError()
+        +reset()
+    }
+    class UseAnalyzer {
+        <<hook>>
+        +start(file) void
+        +cancel() void
+    }
+    class CrossOriginCheck {
+        +isCrossOriginIsolated() boolean
+    }
+
+    %% ===== 页面/组件（部分改造） =====
+    class UploadPage
+    class Uploader
+    class AnalysisPage
+    class LessonPage
+    class VideoPlayer
+    class BeatOverlay
+
+    %% ===== 关系 =====
+    AnalysisResult "1" *-- "many" Segment
+    ABLoop .. UseBeatSync
+    SegmentMath .. UseBeatSync : uses
+    UseAnalyzer .. AnalyzePipeline : drives
+    AnalyzePipeline .. WasmLoaders : needs
+    AnalyzePipeline .. AudioExtractor : needs
+    AudioExtractor .. WasmLoaders : ffmpeg
+    AnalyzePipeline .. BeatDetector : needs
+    BeatDetector .. WasmLoaders : essentia
+    AudioExtractor .. BeatDetectionResult : produces
+    BeatDetector .. BeatDetectionResult : produces
+    PhraseSegmenter .. Segment : produces
+    BeatDetectionResult .. PhraseSegmenter : in
+    UseAnalyzer .. AnalyzerStore : writes
+    AnalyzerStore .. AnalysisPage : reads
+    UploadSession .. UseAnalyzer : file in
+    UploadSession .. LessonPage : objectUrl
+    LessonPage .. UseBeatSync
+    LessonPage .. SegmentMath
+    LessonPage .. LessonStore
+    LessonPage .. UseLocalProgress
+    LessonPage .. VideoPlayer
+    VideoPlayer .. BeatOverlay
+    WasmLoaders .. CrossOriginCheck : multithread?
+    Uploader .. UploadSession : setFile
+    UploadPage .. Uploader
+    AnalysisPage .. UseAnalyzer
