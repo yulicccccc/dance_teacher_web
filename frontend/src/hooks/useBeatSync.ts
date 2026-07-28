@@ -170,6 +170,15 @@ export function useBeatSync(
   // the previous segment) cannot re-trigger a loop and cascade backward.
   // Cleared whenever looping is disabled so it re-acquires on the next enable.
   const loopTargetRef = useRef<number | null>(null)
+  // Tracks the previous-frame value of `loopRef` so we can detect the *rising
+  // edge* of "single-segment loop" enable. On that edge we immediately lock
+  // `loopTargetRef` to the segment the playhead is currently IN (from
+  // `locateBeat` against the real time), instead of waiting for the next
+  // segment boundary to be crossed. Without this, enabling loop mid-segment
+  // would often lock onto the NEXT segment — the boundary-crossing heuristic
+  // only fires once a boundary is actually crossed, which may be the next
+  // bar's end, so the loop would occasionally target the wrong section.
+  const wasLoopRef = useRef(false)
   const beatOffsetRef = useRef(beatOffset)
   beatOffsetRef.current = beatOffset
   // Keep the per-beat duration in a ref updated every render. The rAF loop's
@@ -211,6 +220,17 @@ export function useBeatSync(
         // so the loop boundary stays locked to the actual video position.
         const { activeSegment: realSegIndex } = locateBeat(segments, cur, prev)
         const seg = segments.find((s) => s.index === realSegIndex) ?? null
+
+        // 单节循环上升沿：立即锁定「播放头当前所在小节」，避免锁定到下一节。
+        // On the rising edge of loop enable we lock the target right away to
+        // the segment the playhead currently sits in, rather than waiting for
+        // the next boundary crossing (which would risk locking the NEXT bar).
+        if (loopRef.current && !wasLoopRef.current && seg) {
+          loopTargetRef.current = realSegIndex
+        }
+        // Always mirror the latest loop state every tick so we can detect the
+        // next rising edge even when `seg` is null on this frame.
+        wasLoopRef.current = loopRef.current
 
         // The beat grid and pulse window are shifted by the manual offset,
         // which is now expressed in BEATS and converted to seconds internally

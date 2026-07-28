@@ -14,7 +14,7 @@ interface Props {
 export default function BeatOverlay({ beatIndex, pulse, total = 8 }: Props) {
   return (
     <Box
-      className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center"
+      className="absolute top-0 left-0 p-4 pointer-events-none flex flex-col items-start"
       sx={{ textShadow: '0 2px 12px rgba(0,0,0,0.6)' }}
     >
       <Box
