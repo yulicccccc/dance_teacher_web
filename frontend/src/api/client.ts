@@ -25,6 +25,8 @@ async function upload(args: UploadArgs): Promise<UploadResponse> {
     form.append('file', args.file)
     const { data } = await http.post<UploadResponse>('/upload', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      // Extended timeout (5 min) to absorb cold-start wake-up + large file upload.
+      timeout: 300000,
     })
     return data
   }
@@ -60,6 +62,27 @@ async function health(): Promise<{ status: string }> {
   return data
 }
 
+/**
+ * Warm up the (possibly sleeping) backend. Render free instances sleep after
+ * 15 min idle and need 30-90s to wake. The first request triggers the wake-up
+ * but may be cut off; retrying raises the success rate. All errors are
+ * swallowed — this is purely best-effort and the result is ignored by callers.
+ */
+async function warmup(): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await http.get<{ status: string }>('/health', { timeout: 120000 })
+      return
+    } catch {
+      // Swallow everything: the request already nudged the instance awake.
+    }
+    if (attempt < 2) {
+      // Wait ~10s before retry to let the instance finish booting.
+      await new Promise<void>((resolve) => setTimeout(resolve, 10000))
+    }
+  }
+}
+
 /** Normalize any axios / network error into our uniform ApiError shape. */
 export function extractApiError(err: unknown): ApiError {
   const httpErr = err as AxiosError<{ code?: string; message?: string }>
@@ -79,6 +102,7 @@ export const apiClient = {
   retry,
   recompute,
   health,
+  warmup,
 }
 
 export default apiClient

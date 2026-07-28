@@ -56,13 +56,17 @@ export default function Uploader({ onUploaded, onError }: Props) {
         form.append('file', file)
         const { data } = await http.post<UploadResponse>('/upload', form, {
           headers: { 'Content-Type': 'multipart/form-data' },
+          // Extended timeout (5 min) covers cold-start wake-up + large upload.
+          timeout: 300000,
           onUploadProgress: (e) => {
             if (e.total) setProgress(Math.round((e.loaded / e.total) * 100))
           },
         })
         resp = data
       } else if (url.trim()) {
-        const { data } = await http.post<UploadResponse>('/upload', { url: url.trim() })
+        const { data } = await http.post<UploadResponse>('/upload', { url: url.trim() }, {
+          timeout: 300000,
+        })
         resp = data
       } else {
         onError('请选择本地视频或粘贴视频链接')
@@ -71,8 +75,22 @@ export default function Uploader({ onUploaded, onError }: Props) {
       }
       onUploaded(resp.taskId, computeVideoId(file, url))
     } catch (e) {
-      const err = e as { response?: { data?: { message?: string } }; message?: string }
-      onError(err?.response?.data?.message ?? err?.message ?? '上传失败')
+      const err = e as {
+        code?: string
+        response?: { data?: { message?: string } }
+        message?: string
+      }
+      const msgLower = (err?.message ?? '').toLowerCase()
+      const isTimeoutOrNetwork =
+        err?.code === 'ECONNABORTED' ||
+        msgLower.includes('timeout') ||
+        msgLower.includes('network')
+      // On timeout / network errors keep the selected file so the user can just
+      // retry without re-picking it.
+      const msg = isTimeoutOrNetwork
+        ? '服务器正在启动或网络较慢，文件已保留，请稍候点击【开始分析】再试一次'
+        : err?.response?.data?.message ?? err?.message ?? '上传失败'
+      onError(msg)
     } finally {
       setUploading(false)
     }

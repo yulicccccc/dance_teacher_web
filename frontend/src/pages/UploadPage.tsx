@@ -1,11 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AppBar, Box, Button, Container, Toolbar, Typography } from '@mui/material'
 import Uploader from '../components/Uploader'
+import { apiClient } from '../api/client'
 
 export default function UploadPage() {
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
+  const [warming, setWarming] = useState(false)
+
+  useEffect(() => {
+    // Fire-and-forget backend warm-up (Render cold start). Result is ignored.
+    setWarming(true)
+    void apiClient.warmup().finally(() => setWarming(false))
+  }, [])
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
@@ -24,6 +32,11 @@ export default function UploadPage() {
         <Typography color="text.secondary" sx={{ mb: 4 }}>
           上传后网站会自动按 8 拍拆成小节，像舞室老师一样一小节一小节带练。视频仅用于本地学习、不外传。
         </Typography>
+        {warming && (
+          <Typography variant="caption" color="text.secondary" sx={{ mb: 1 }}>
+            正在唤醒服务器…
+          </Typography>
+        )}
         <Uploader
           onUploaded={(taskId, videoId) => navigate(`/analyze/${taskId}`, { state: { videoId } })}
           onError={setError}
