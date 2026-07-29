@@ -280,3 +280,75 @@ describe('QA 独立回归 — 只在跨过扩展后 loopEnd 才重启 (point 4)'
     container.remove()
   })
 })
+
+describe('Bug: user seek while looping re-locks the loop target to the new section', () => {
+  it('user drags to segment 5 after looping seg 3 → loop re-locks to seg 5 (restart at 15.5), no cascade to seg 1/2', () => {
+    const { video, timeLog, root, container } = setup({
+      segments: makeSegments(),
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+    })
+    // Navigate to segment 3 (start = 8.0) and enable the loop.
+    act(() => {
+      video.currentTime = 8.0
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+    timeLog.length = 0
+
+    // Loop seg 3: confirm it restarts at its padded start 7.5 (one beat before
+    // its real 8.0 start, sitting in the previous phrase's last beat).
+    let looped3 = false
+    for (let k = 1; k <= 100 && !looped3; k++) {
+      const t = Number((8.0 + k * 0.05).toFixed(5))
+      timeLog.length = 0
+      act(() => {
+        video.currentTime = t
+      })
+      step()
+      if (timeLog.some((x) => Math.abs(x - 7.5) < 1e-3)) looped3 = true
+    }
+    expect(looped3).toBe(true)
+
+    // --- User drags the scrubber to segment 5 (start = 16.0, end = 20.0). This
+    // is a REAL user seek, NOT the loop's own loop-back seek (which would land at
+    // 7.5), so the loop target must re-lock onto segment 5.
+    act(() => {
+      video.currentTime = 16.0
+      video.dispatchEvent(new Event('seeked'))
+    })
+    timeLog.length = 0
+
+    // Continue playback from ~16.0. Assert we eventually restart at seg 5's
+    // padded start 15.5 (= 16.0 - 0.5, one beat before its real start, sitting in
+    // the previous phrase's last beat) and that the OLD seg-3 start (7.5) and any
+    // earlier-segment starts (4.0 / 0.0) NEVER recur — i.e. no backward cascade.
+    let position = 16.0
+    let restartedAt15_5 = false
+    let reappeared7_5 = false
+    let cascadeToPrev = false
+    for (let i = 0; i < 700; i++) {
+      timeLog.length = 0
+      position += 0.05
+      act(() => {
+        video.currentTime = position
+      })
+      step()
+      if (timeLog.some((x) => Math.abs(x - 15.5) < 1e-3)) restartedAt15_5 = true
+      if (timeLog.some((x) => Math.abs(x - 7.5) < 1e-3)) reappeared7_5 = true
+      if (timeLog.some((x) => Math.abs(x - 4.0) < 1e-3)) cascadeToPrev = true
+      if (timeLog.some((x) => Math.abs(x - 0.0) < 1e-3)) cascadeToPrev = true
+      // Honour any loop-back the engine performed this frame.
+      position = (video as unknown as { currentTime: number }).currentTime
+    }
+    // The loop re-locked to segment 5 and restarts at its padded start 15.5...
+    expect(restartedAt15_5).toBe(true)
+    // ...the old seg-3 restart (7.5) never reappears...
+    expect(reappeared7_5).toBe(false)
+    // ...and it never cascades into an earlier segment (seg 1/2).
+    expect(cascadeToPrev).toBe(false)
+    root.unmount()
+    container.remove()
+  })
+})
