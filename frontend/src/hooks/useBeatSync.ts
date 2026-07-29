@@ -170,14 +170,17 @@ export function useBeatSync(
   // the previous segment) cannot re-trigger a loop and cascade backward.
   // Cleared whenever looping is disabled so it re-acquires on the next enable.
   const loopTargetRef = useRef<number | null>(null)
-  // Stores the padded `loopStart` that the single-segment loop is about to seek
-  // back to on its OWN programmatic loop-back. The `seeked` listener uses it to
-  // tell the loop's own loop-back (which lands inside the previous phrase's
-  // one-beat lead-in) apart from a genuine USER seek (drag/scrub). Without this
-  // distinction a loop-back seek would be mistaken for a user jump into the
-  // previous segment and the target would be re-locked one section earlier,
-  // cascading backward through the timeline.
-  const expectedLoopStartRef = useRef<number | null>(null)
+  // Guard flag set immediately BEFORE the single-segment loop performs its OWN
+  // programmatic loop-back seek (`video.currentTime = bounds.loopStart`). The
+  // `seeked` listener reads it to tell the loop's own loop-back apart from a
+  // genuine USER seek (drag/scrub), so the target is NOT re-locked into the
+  // previous phrase (which would cascade backward through the timeline).
+  // We use a guard flag instead of comparing the seek *landing point* to the
+  // requested `loopStart`, because a real <video> reports `currentTime` with
+  // frame-level precision (±16–33ms at 30fps) that routinely exceeds any fixed
+  // tolerance — the old 10ms position comparison misread loop-backs as user
+  // jumps and cascaded backward.
+  const seekingForLoopRef = useRef(false)
   // Tracks the previous-frame value of `loopRef` so we can detect the *rising
   // edge* of "single-segment loop" enable. On that edge we immediately lock
   // `loopTargetRef` to the segment the playhead is currently IN (from
@@ -213,18 +216,15 @@ export function useBeatSync(
 
     const onSeeked = () => {
       const t = video.currentTime
-      // Distinguish the loop's OWN programmatic loop-back seek (currentTime was
-      // just set to the padded `loopStart`, which sits inside the previous
-      // phrase's one-beat lead-in) from a genuine USER seek (drag/scrub).
-      // If we re-locked by position on the loop-back we would latch onto that
-      // earlier segment and cascade backward — so it must only reset prevTime.
-      const isLoopOwnSeek =
-        loopTargetRef.current !== null &&
-        expectedLoopStartRef.current !== null &&
-        Math.abs(t - expectedLoopStartRef.current) < 1e-2
-      if (isLoopOwnSeek) {
-        // Programmatic loop-back: just reset prevTime so the next frame does not
-        // re-detect the seam; do NOT re-lock the target.
+      if (seekingForLoopRef.current) {
+        // This is the loop's OWN programmatic loop-back. The landing point may
+        // differ by tens of ms from the requested `loopStart` (frame-level
+        // precision of a real <video>), which is now irrelevant because we know
+        // WHO initiated the seek via the guard flag. Just reset prevTime so the
+        // next frame does not re-detect the seam — do NOT re-lock the target,
+        // otherwise we would latch onto the previous phrase and cascade
+        // backward through the timeline.
+        seekingForLoopRef.current = false
         prevTimeRef.current = t
       } else {
         // Genuine user seek (or initial navigation): re-lock the single-segment
@@ -310,6 +310,9 @@ export function useBeatSync(
             // entirely while AB is active, so the seek back into the earlier
             // segment can never re-trigger a padded loop and cascade backward.
             if (prev < ab.bTime - AB_LOOP_EPS && ab.bTime <= cur) {
+              // Mark as programmatic so the resulting `seeked` is not mistaken
+              // for a user drag (which would re-lock the single-segment target).
+              seekingForLoopRef.current = true
               v.currentTime = ab.aTime
               // A programmatic seek pauses the element internally; resume so the
               // loop keeps running instead of freezing on the seam.
@@ -333,11 +336,13 @@ export function useBeatSync(
               // padded loopEnd (which includes the trailing one-beat buffer),
               // so the extra beat before the seam is truly heard/seen.
               if (prev < bounds.loopEnd - LOOP_EPS && bounds.loopEnd <= cur) {
-                // Record the padded loopStart we are about to seek to so the
-                // `seeked` listener can recognise this as the loop's OWN
-                // loop-back (and NOT re-lock the target into the previous
-                // phrase's lead-in, which would cascade backward).
-                expectedLoopStartRef.current = bounds.loopStart
+                // Flag that the upcoming seek is the loop's OWN programmatic
+                // loop-back, so the `seeked` listener recognises it (and does
+                // NOT re-lock the target into the previous phrase's lead-in,
+                // which would cascade backward). We use a guard flag rather than
+                // comparing the seek landing point to `loopStart`, because real
+                // <video> currentTime precision (±16–33ms) dwarfs any fixed tol.
+                seekingForLoopRef.current = true
                 v.currentTime = bounds.loopStart
                 // A programmatic seek triggers an internal pause on <video>;
                 // resume playback so the loop keeps running instead of freezing.

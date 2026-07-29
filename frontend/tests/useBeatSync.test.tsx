@@ -11,10 +11,23 @@ import type { Segment } from '../src/types/api'
 // ---- rAF control: capture the single callback so we can step frames manually.
 type RafCb = (t: number) => void
 let rafQueue: RafCb[] = []
+// `seeked` events queued by the video's `currentTime` setter while a rAF tick
+// is running (i.e. the engine's own programmatic loop-back seek). Flushed by
+// `flushSeeked()` after the frame, mimicking a real <video> firing `seeked`
+// once the seek completes. Seeks performed OUTSIDE a tick (plain playback
+// advances set by the test, or explicit user-drag dispatches) do NOT enqueue,
+// because a real browser only fires `seeked` for genuine seeks, not for every
+// frame's playback advance.
+let pendingSeeked: Array<() => void> = []
+// True only while a rAF tick callback is executing, so the `currentTime` setter
+// can tell an engine-driven programmatic seek from a test-driven playback set.
+let inFrame = false
 const realRaf = globalThis.requestAnimationFrame
 const realCaf = globalThis.cancelAnimationFrame
 beforeEach(() => {
   rafQueue = []
+  pendingSeeked = []
+  inFrame = false
   globalThis.requestAnimationFrame = ((cb: RafCb) => {
     rafQueue.push(cb)
     return rafQueue.length
@@ -28,13 +41,31 @@ afterEach(() => {
 function flushRaf() {
   const cbs = rafQueue
   rafQueue = []
+  inFrame = true
   for (const cb of cbs) cb()
+  inFrame = false
 }
 // Run one animation frame inside act() so React state updates are flushed.
-function step() {
+// Does NOT flush the queued `seeked` events (see flushSeeked).
+function frame() {
   act(() => {
     flushRaf()
   })
+}
+// Flush any `seeked` events queued by the engine's programmatic seeks during
+// the last frame. This is where the guard flag in useBeatSync gets cleared,
+// exactly like a real browser firing `seeked` after the seek lands.
+function flushSeeked() {
+  act(() => {
+    const evs = pendingSeeked
+    pendingSeeked = []
+    for (const e of evs) e()
+  })
+}
+// Default step used by most tests: run a frame then flush its queued seeked.
+function step() {
+  frame()
+  flushSeeked()
 }
 
 // 5 contiguous 8-beat segments @ 120 BPM (0.5s/beat), 4s each.
@@ -77,6 +108,14 @@ function makeVideo() {
     set: (v: number) => {
       current = v
       timeLog.push(v)
+      // Replay a real <video>'s `seeked` for engine-driven programmatic seeks
+      // (the single-segment/AB loop-back, which runs inside a rAF tick). Plain
+      // playback advances set by the test run OUTSIDE a tick and must stay
+      // silent, otherwise every per-frame advance would be read as a user drag
+      // and re-lock the loop target every frame (breaking the cascade guards).
+      if (inFrame) {
+        pendingSeeked.push(() => video.dispatchEvent(new Event('seeked')))
+      }
     },
   })
   video.__timeLog = timeLog
@@ -348,6 +387,73 @@ describe('Bug: user seek while looping re-locks the loop target to the new secti
     expect(reappeared7_5).toBe(false)
     // ...and it never cascades into an earlier segment (seg 1/2).
     expect(cascadeToPrev).toBe(false)
+    root.unmount()
+    container.remove()
+  })
+})
+
+describe('真实失败复现：回跳落点有 ±30ms 偏差时不级联', () => {
+  it('loop-back landing +0.03s off (7.53 vs requested 7.5) keeps looping seg3, never cascades to seg2/seg1', () => {
+    const { video, timeLog, root, container } = setup({
+      segments: makeSegments(),
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+    })
+    // Navigate to segment 3 (start = 8.0) and enable the loop (a real user seek).
+    act(() => {
+      video.currentTime = 8.0
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+    timeLog.length = 0
+
+    // Simulate continuous playback with frame() + flushSeeked(). When the engine
+    // crosses the padded loopEnd (12.5) it seeks back to loopStart 7.5 inside
+    // the tick (queuing a `seeked`). We then OVERWRITE currentTime to 7.53 to
+    // mimic a real browser's frame-level landing deviation (+30ms) BEFORE we
+    // flush the seeked. The guard flag must still recognise this as the loop's
+    // OWN seek regardless of the landing offset, so the target stays locked on
+    // seg3 and restarts at 7.5 every cycle — no backward cascade.
+    let position = 8.0
+    let restartsAt7_5 = 0
+    let soughtToSeg2Start = false
+    let soughtToSeg1Start = false
+    for (let i = 0; i < 400; i++) {
+      timeLog.length = 0
+      position += 0.05
+      // Plain playback advance — must NOT enqueue a `seeked` (real browsers
+      // don't fire `seeked` for normal playback).
+      act(() => {
+        video.currentTime = position
+      })
+      // Run the engine tick: may queue a loop-back `seeked` (in-tick seek).
+      frame()
+      // Simulate the real-browser +0.03s landing deviation on a loop-back.
+      if (Math.abs(video.currentTime - 7.5) < 1e-3) {
+        act(() => {
+          video.currentTime = 7.53
+        })
+      }
+      // Fire the queued `seeked` — reads currentTime = 7.53 while the guard
+      // flag is still set, so onSeeked clears it without re-locking.
+      flushSeeked()
+
+      if (timeLog.some((x) => Math.abs(x - 7.5) < 1e-3)) restartsAt7_5++
+      if (timeLog.some((x) => Math.abs(x - 4.0) < 1e-3)) soughtToSeg2Start = true
+      if (timeLog.some((x) => Math.abs(x - 0.0) < 1e-3)) soughtToSeg1Start = true
+      // Honour any loop-back the engine performed this frame.
+      position = (video as unknown as { currentTime: number }).currentTime
+    }
+
+    // The loop keeps restarting at seg3's padded start (7.5) every cycle...
+    expect(restartsAt7_5).toBeGreaterThanOrEqual(3)
+    // ...and NEVER re-locks into segment 2 (start 4.0) or segment 1 (start 0.0)
+    // — i.e. the backward cascade is gone. On the pre-fix code (10ms position
+    // comparison) a +0.03s landing would be misread as a user jump into seg2,
+    // re-locking the target and cascading, so restartsAt7_5 would stall at 1.
+    expect(soughtToSeg2Start).toBe(false)
+    expect(soughtToSeg1Start).toBe(false)
     root.unmount()
     container.remove()
   })
