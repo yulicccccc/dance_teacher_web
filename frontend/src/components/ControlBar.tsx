@@ -16,6 +16,7 @@ import SkipPreviousIcon from '@mui/icons-material/SkipPrevious'
 import ReplayIcon from '@mui/icons-material/Replay'
 import FlipIcon from '@mui/icons-material/Flip'
 import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver'
+import VideocamIcon from '@mui/icons-material/Videocam'
 import { useLessonStore } from '../store/lessonStore'
 import { findBeatAt } from '../utils/segmentMath'
 import type { Segment, ABLoop } from '../types/api'
@@ -38,6 +39,8 @@ interface Props {
   onEnableAB: () => void
   onDisableAB: () => void
   onClearAB: () => void
+  /** Open the camera comparison modal (teacher left / learner right). */
+  onCompare: () => void
 }
 
 /**
@@ -79,6 +82,7 @@ export default function ControlBar({
   onEnableAB,
   onDisableAB,
   onClearAB,
+  onCompare,
 }: Props) {
   const playbackRate = useLessonStore((s) => s.playbackRate)
   const setPlaybackRate = useLessonStore((s) => s.setPlaybackRate)
@@ -185,6 +189,16 @@ export default function ControlBar({
             onClick={() => setVoiceEnabled(!voiceEnabled)}
           >
             口令
+          </Button>
+        </Tooltip>
+        <Tooltip title="调用摄像头，和老师同屏对比录制（一小节结束自动停止，可下载）">
+          <Button
+            variant="contained"
+            color="secondary"
+            startIcon={<VideocamIcon />}
+            onClick={onCompare}
+          >
+            对照练习
           </Button>
         </Tooltip>
       </Stack>

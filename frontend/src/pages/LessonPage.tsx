@@ -21,8 +21,10 @@ import { useLessonStore } from '../store/lessonStore'
 import VideoPlayer from '../components/VideoPlayer'
 import SegmentList from '../components/SegmentList'
 import ControlBar from '../components/ControlBar'
+import CompareMode from '../components/CompareMode'
 import ProgressHeader from '../components/ProgressHeader'
 import { resegmentSegments, findBeatAt } from '../utils/segmentMath'
+import { resolveCompareSegment } from '../utils/compare'
 import { pickChineseVoice } from '../utils/voice'
 import type { AnalysisResult, RecomputeMode } from '../types/api'
 
@@ -45,6 +47,7 @@ export default function LessonPage() {
   const [firstBeat, setFirstBeat] = useState('0')
   const [snack, setSnack] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
+  const [compareOpen, setCompareOpen] = useState(false)
 
   const currentSegment = useLessonStore((s) => s.currentSegment)
   const playbackRate = useLessonStore((s) => s.playbackRate)
@@ -383,10 +386,21 @@ export default function LessonPage() {
               onEnableAB={handleEnableAB}
               onDisableAB={handleDisableAB}
               onClearAB={handleClearAB}
+              onCompare={() => setCompareOpen(true)}
             />
           </Box>
         </Box>
       </Container>
+
+      <CompareMode
+        open={compareOpen}
+        onClose={() => setCompareOpen(false)}
+        src={videoSrc}
+        segment={resolveCompareSegment(offsetSegments, currentSegment)}
+        segmentIndex={currentSegment}
+        mirror={mirror}
+        videoName={result.videoName}
+      />
 
       <Dialog open={lowConfOpen} onClose={() => setLowConfOpen(false)}>
         <DialogTitle>节拍置信度较低</DialogTitle>
