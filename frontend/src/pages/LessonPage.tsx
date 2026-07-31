@@ -52,6 +52,7 @@ export default function LessonPage() {
   const loopSegment = useLessonStore((s) => s.loopSegment)
   const voiceEnabled = useLessonStore((s) => s.voiceEnabled)
   const beatOffset = useLessonStore((s) => s.beatOffset)
+  const loopCount = useLessonStore((s) => s.loopCount)
   const abLoop = useLessonStore((s) => s.abLoop)
   const setABLoop = useLessonStore((s) => s.setABLoop)
   const learnedSegments = useLessonStore((s) => s.learnedSegments)
@@ -86,6 +87,7 @@ export default function LessonPage() {
     beatDuration,
     (i) => setSegment(i),
     abLoop,
+    loopCount,
   )
 
   // Fetch result + hydrate progress from local storage.

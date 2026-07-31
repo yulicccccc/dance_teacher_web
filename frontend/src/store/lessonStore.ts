@@ -14,6 +14,7 @@ export interface LessonState {
   abLoop: ABLoop | null
   voiceEnabled: boolean
   beatOffset: number // manual beat-grid offset in BEATS (display only), default 0
+  loopCount: number | null // loop repetition limit; null = infinite
   learnedSegments: number[]
   setSegment: (i: number) => void
   setPlaybackRate: (r: number) => void
@@ -22,6 +23,7 @@ export interface LessonState {
   setABLoop: (v: ABLoop | null) => void
   setVoiceEnabled: (b: boolean) => void
   setBeatOffset: (n: number) => void
+  setLoopCount: (n: number | null) => void
   toggleLearned: (i: number) => void
   setLearnedSegments: (arr: number[]) => void
   reset: () => void
@@ -35,6 +37,7 @@ export const useLessonStore = create<LessonState>((set) => ({
   abLoop: null,
   voiceEnabled: false,
   beatOffset: 0,
+  loopCount: null,
   learnedSegments: [],
 
   setSegment: (i) => set({ currentSegment: i }),
@@ -51,6 +54,7 @@ export const useLessonStore = create<LessonState>((set) => ({
     set(v && v.enabled ? { abLoop: v, loopSegment: false } : { abLoop: v }),
   setVoiceEnabled: (b) => set({ voiceEnabled: b }),
   setBeatOffset: (n) => set({ beatOffset: n }),
+  setLoopCount: (n) => set({ loopCount: n }),
   toggleLearned: (i) =>
     set((s) => ({
       learnedSegments: s.learnedSegments.includes(i)
@@ -66,6 +70,7 @@ export const useLessonStore = create<LessonState>((set) => ({
       abLoop: null,
       voiceEnabled: false,
       beatOffset: 0,
+      loopCount: null,
       learnedSegments: [],
     }),
   setLearnedSegments: (arr) =>

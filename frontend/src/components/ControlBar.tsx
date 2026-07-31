@@ -1,9 +1,11 @@
 import {
   Box,
   Button,
+  FormControlLabel,
   IconButton,
   Slider,
   Stack,
+  Switch,
   Tooltip,
   Typography,
 } from '@mui/material'
@@ -88,6 +90,8 @@ export default function ControlBar({
   const setVoiceEnabled = useLessonStore((s) => s.setVoiceEnabled)
   const beatOffset = useLessonStore((s) => s.beatOffset)
   const setBeatOffset = useLessonStore((s) => s.setBeatOffset)
+  const loopCount = useLessonStore((s) => s.loopCount)
+  const setLoopCount = useLessonStore((s) => s.setLoopCount)
 
   // A loop with aTime >= bTime is degenerate (A not before B) -> cannot enable.
   const abIncomplete = abLoop != null && abLoop.aTime >= abLoop.bTime
@@ -183,6 +187,52 @@ export default function ControlBar({
             口令
           </Button>
         </Tooltip>
+      </Stack>
+
+      {/* 循环次数限制：默认关闭 = 无限循环；开启后滑条 3–10 次。
+          对单节循环与 AB 循环都生效；到数后退出并继续播放。 */}
+      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+        <FormControlLabel
+          control={
+            <Switch
+              checked={loopCount != null}
+              onChange={(e) => setLoopCount(e.target.checked ? 5 : null)}
+            />
+          }
+          label="限制循环次数"
+        />
+        {loopCount != null && (
+          <>
+            <Slider
+              size="small"
+              min={3}
+              max={10}
+              step={1}
+              value={loopCount}
+              onChange={(_, v) => setLoopCount(v as number)}
+              valueLabelDisplay="auto"
+              valueLabelFormat={(v) => `${v} 次`}
+              aria-label="循环次数"
+              sx={{ width: 160 }}
+            />
+            <Typography
+              variant="body2"
+              sx={{
+                whiteSpace: 'nowrap',
+                minWidth: 44,
+                textAlign: 'right',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {`${loopCount} 次`}
+            </Typography>
+            <Tooltip title="对单节循环和 AB 循环都生效；到数后退出并继续播放">
+              <Typography variant="caption" color="text.secondary">
+                到数后继续播
+              </Typography>
+            </Tooltip>
+          </>
+        )}
       </Stack>
 
       {/* 自定义 A→B 循环（以拍子为单位，与单节循环互斥） */}
