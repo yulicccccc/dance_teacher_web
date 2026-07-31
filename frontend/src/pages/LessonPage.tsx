@@ -78,7 +78,7 @@ export default function LessonPage() {
       ? segments.reduce((a, s) => a + (s.endTime - s.startTime), 0) /
         segments.reduce((a, s) => a + s.beats.length, 0)
       : 0
-  const { beatIndex, pulse } = useBeatSync(
+  const { beatIndex, pulse, stepBeat } = useBeatSync(
     videoRef,
     offsetSegments,
     loopSegment,
@@ -363,6 +363,7 @@ export default function LessonPage() {
               videoRef={videoRef}
               beatIndex={beatIndex}
               pulse={pulse}
+              stepBeat={stepBeat}
             />
             <ControlBar
               playing={playing}

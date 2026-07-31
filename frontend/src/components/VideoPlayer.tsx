@@ -10,6 +10,8 @@ interface Props {
   videoRef: RefObject<HTMLVideoElement>
   beatIndex: number
   pulse: boolean
+  /** Double-click gesture: seek to the adjacent beat and pause (1 = next, -1 = previous). */
+  stepBeat?: (dir: 1 | -1) => void
 }
 
 /**
@@ -22,7 +24,7 @@ interface Props {
  * the beat overlay scale together with the video; `requestFullscreen` only
  * enlarges the container and leaves the inner layout untouched.
  */
-export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse }: Props) {
+export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse, stepBeat }: Props) {
   const mirrorSx: SxProps<Theme> = mirror
     ? { transform: 'scaleX(-1)' }
     : { transform: 'none' }
@@ -57,6 +59,14 @@ export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse }:
     <Box
       ref={containerRef}
       className="relative w-full aspect-video bg-black rounded-xl overflow-hidden"
+      // Double-click anywhere on the play area: jump to the NEXT beat and
+      // freeze there; Shift+double-click jumps to the PREVIOUS beat. Play/pause
+      // is driven by the external ControlBar (no single-click gesture on the
+      // video itself), so the double-click gesture cannot conflict with it.
+      onDoubleClick={(e) => {
+        e.preventDefault()
+        stepBeat?.(e.shiftKey ? -1 : 1)
+      }}
     >
       <Box className="w-full h-full" sx={mirrorSx}>
         <video ref={videoRef} src={src} className="w-full h-full object-contain" playsInline />
@@ -64,6 +74,9 @@ export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse }:
       <BeatOverlay beatIndex={beatIndex} pulse={pulse} />
       <IconButton
         onClick={toggleFullscreen}
+        // Swallow double-clicks so rapidly toggling fullscreen does not bubble
+        // to the container and trigger a beat jump.
+        onDoubleClick={(e) => e.stopPropagation()}
         aria-label={isFullscreen ? '退出全屏' : '全屏'}
         sx={{
           position: 'absolute',

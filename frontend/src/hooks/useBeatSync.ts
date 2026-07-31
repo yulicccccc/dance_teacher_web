@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type { Segment, ABLoop } from '../types/api'
 
 interface SyncResult {
   beatIndex: number // 1..8 (0 = none yet)
   pulse: boolean // transient flag for the beat pulse animation
   activeSegment: number // 1-based segment currently playing
+  /** Seek to the adjacent beat (dir=1 next, dir=-1 previous) and pause there. */
+  stepBeat: (dir: 1 | -1) => void
 }
 
 export interface BeatLocator {
@@ -371,5 +373,42 @@ export function useBeatSync(
     }
   }, [segments, videoRef])
 
-  return { beatIndex, pulse, activeSegment }
+  /**
+   * Jump the playhead to the adjacent beat timestamp and freeze there.
+   *
+   * dir = 1  → the next beat strictly after the current time (clamped to the
+   *            last beat when already past the end of the grid).
+   * dir = -1 → the previous beat strictly before the current time (clamped to
+   *            the first beat when already at/ahead of the grid start).
+   *
+   * Intentionally does NOT touch `seekingForLoopRef`: the resulting `seeked`
+   * event is treated by `onSeeked` as a genuine user seek, which re-locks the
+   * single-segment loop target onto the new beat's segment — the same
+   * (desired) behavior as dragging the scrubber.
+   */
+  const stepBeat = useCallback(
+    (dir: 1 | -1) => {
+      const v = videoRef.current
+      if (!v || segments.length === 0) return
+      // Global ascending list of beat timestamps across all segments.
+      const beats = segments.flatMap((s) => s.beats)
+      if (beats.length === 0) return
+      const t = v.currentTime
+      const EPS = 1e-3
+      let target: number
+      if (dir === 1) {
+        // Next beat; clamp to the last beat once past the end of the grid.
+        target = beats.find((b) => b > t + EPS) ?? beats[beats.length - 1]
+      } else {
+        // Previous beat; clamp to the first beat at/ahead of the grid start.
+        const rev = [...beats].reverse().find((b) => b < t - EPS)
+        target = rev ?? beats[0]
+      }
+      v.currentTime = target
+      v.pause()
+    },
+    [segments, videoRef],
+  )
+
+  return { beatIndex, pulse, activeSegment, stepBeat }
 }
