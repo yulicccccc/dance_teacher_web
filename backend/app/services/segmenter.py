@@ -25,18 +25,24 @@ def aggregate(beat_times: List[float], duration: float, beats_per_segment: int =
     """
     segments: List[Segment] = []
     n = len(beat_times)
-    if n < beats_per_segment:
+    if n == 0:
         return segments
 
     index = 1
     i = 0
-    while i + beats_per_segment <= n:
+    # Keep walking the timeline. A trailing phrase with fewer than 8 beats is
+    # still emitted (extended to the media end) rather than dropped — a
+    # non-8-multiple beat count (e.g. manual_first_beat grids) must NOT lose the
+    # final phrase. This is why "8 phrases in the video" used to show as 7.
+    while i < n:
         seg_beats = beat_times[i : i + beats_per_segment]
+        if not seg_beats:
+            break
         start = float(seg_beats[0])
         if i + beats_per_segment < n:
             end = float(beat_times[i + beats_per_segment])
         else:
-            # Final phrase: extend to cover the trailing movement.
+            # Trailing phrase: extend to cover the remaining movement.
             avg = _avg_interval(seg_beats)
             tail = float(seg_beats[-1]) + 0.5 * avg
             end = min(duration, tail) if duration and duration > 0 else tail

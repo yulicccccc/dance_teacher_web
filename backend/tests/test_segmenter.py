@@ -42,17 +42,35 @@ def test_aggregate_index_starts_at_one_and_increments():
     assert [s.index for s in segs] == [1, 2, 3]
 
 
-def test_aggregate_drops_short_tail():
-    """10 beats -> only the first full 8-count phrase is kept; the 2-beat tail is dropped."""
+def test_aggregate_keeps_short_tail():
+    """10 beats -> 2 segments (8 + 2); the 2-beat tail is KEPT as the final phrase."""
     beats = [round(i * 0.5, 4) for i in range(10)]
     segs = aggregate(beats, 5.0)
-    assert len(segs) == 1
+    assert len(segs) == 2
     assert len(segs[0].beats) == 8
+    assert len(segs[1].beats) == 2
 
 
-def test_aggregate_fewer_than_8_beats_returns_empty():
-    assert aggregate([0.1, 0.2, 0.3], 1.0) == []
+def test_aggregate_empty_beats_returns_empty():
     assert aggregate([], 8.0) == []
+
+
+def test_aggregate_short_single_phrase_kept():
+    """Fewer than 8 beats -> one (short) phrase, not dropped."""
+    segs = aggregate([0.1, 0.2, 0.3], 1.0)
+    assert len(segs) == 1
+    assert len(segs[0].beats) == 3
+
+
+def test_aggregate_non_multiple_of_8_keeps_final_phrase():
+    """63 beats (a manual_first_beat grid 7 beats short of 8×8) -> 8 segments,
+    not 7. Regression for the 'last 8-count missing after adjusting first beat' bug.
+    """
+    beats = [round(i * 0.5, 4) for i in range(63)]
+    segs = aggregate(beats, 31.5)
+    assert len(segs) == 8
+    # final phrase carries the leftover 7 beats
+    assert len(segs[-1].beats) == 7
 
 
 def test_aggregate_exactly_8_beats_single_segment():
@@ -91,7 +109,9 @@ def test_generate_from_first_beat_anchors_start():
 def test_generate_fixed_then_aggregate_two_segments():
     beats = generate_fixed_beats(8.0, 120.0)
     segs = aggregate(beats, 8.0)
-    assert len(segs) == 2
+    # 17 beats (0.0..8.0) -> 3 phrases (8 + 8 + 1); trailing phrase KEPT.
+    assert len(segs) == 3
     assert segs[0].endTime == 4.0
-    assert segs[1].endTime == 8.0  # last beat == duration -> clean round end
-    assert all(len(s.beats) == 8 for s in segs)
+    assert segs[2].endTime == 8.0  # last beat == duration -> clean round end
+    assert len(segs[0].beats) == 8
+    assert len(segs[1].beats) == 8

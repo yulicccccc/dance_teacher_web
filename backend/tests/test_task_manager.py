@@ -91,12 +91,14 @@ def test_recompute_fixed120(tmp_path, monkeypatch):
     assert res.progress == 100
     assert res.bpm == 120.0
     assert res.confidence == 1.0
-    assert len(res.segments) == 2
-    for s in res.segments:
-        assert len(s.beats) == 8
-        assert s.type == "dance"
+    # FAKE_DURATION=8.0 -> 17 beats -> 3 phrases (8 + 8 + 1); trailing KEPT.
+    assert len(res.segments) == 3
     assert res.segments[0].index == 1
     assert res.segments[0].startTime == 0.0
+    assert len(res.segments[0].beats) == 8
+    assert len(res.segments[1].beats) == 8
+    assert res.segments[0].type == "dance"
+    assert res.segments[1].type == "dance"
 
 
 def test_recompute_manual_first_beat(tmp_path, monkeypatch):
@@ -109,10 +111,11 @@ def test_recompute_manual_first_beat(tmp_path, monkeypatch):
 
     res = tm.recompute(tid, "manual_first_beat", 1.0)
     assert res.status == "done"
-    # 15 beats over 8s -> first full 8-count phrase kept, 7-beat tail dropped.
-    assert len(res.segments) == 1
+    # 15 beats over 8s -> 2 phrases (8 + 7); the 7-beat tail is KEPT.
+    assert len(res.segments) == 2
     assert res.segments[0].startTime == 1.0
     assert len(res.segments[0].beats) == 8
+    assert len(res.segments[1].beats) == 7
 
 
 def test_recompute_manual_requires_first_beat(tmp_path, monkeypatch):
@@ -140,4 +143,4 @@ def test_recompute_persists_to_disk(tmp_path, monkeypatch):
     reloaded = tm2.get_status(tid)
     assert reloaded is not None
     assert reloaded.status == "done"
-    assert len(reloaded.segments) == 2
+    assert len(reloaded.segments) == 3
