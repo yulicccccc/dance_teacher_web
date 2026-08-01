@@ -71,8 +71,10 @@ export function resegmentSegments(
   )
 
   const result: Segment[] = []
-  // 3. Cut one 8-beat phrase per step, dropping any trailing partial phrase.
-  for (let i = 0; startIndex + i * 8 + 8 <= allBeats.length; i++) {
+  // 3. Cut one phrase per step. When beatOffset ≠ 0 the grid shifts and the
+  // final phrase may contain fewer than 8 beats — we still keep it so the
+  // displayed segment count always matches the original analysis.
+  for (let i = 0; startIndex + i * 8 < allBeats.length; i++) {
     const base = startIndex + i * 8
     const beats = allBeats.slice(base, base + 8)
     const startTime = beats[0]

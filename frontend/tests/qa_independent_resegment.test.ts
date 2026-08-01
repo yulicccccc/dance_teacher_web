@@ -29,10 +29,12 @@ function grid40(): Segment[] {
 }
 
 describe('QA-independent: offset = -4 re-cuts to clean 1..8 phrases', () => {
-  it('offsetSegments[0].beats === original beat #5..#12 = [2.0..5.5]', () => {
+  it('segment 1 beats = original #5..#12 = [2.0..5.5], segment 2 partial (4 beats)', () => {
     const out = resegmentSegments(grid16(), -4)
-    expect(out.length).toBe(1)
+    // 16 beats, startIndex=4 → 2 segments (base=4: 8 beats, base=12: 4 beats)
+    expect(out.length).toBe(2)
     expect(out[0].beats).toEqual([2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5])
+    expect(out[1].beats.length).toBe(4)
   })
 
   it('the new phrase start (t=2.0) now reads beatIndex 1 — bug fixed', () => {
@@ -42,21 +44,26 @@ describe('QA-independent: offset = -4 re-cuts to clean 1..8 phrases', () => {
     expect(locateBeat(out, 2.0, 1.9)).toMatchObject({ activeSegment: 1, beatIndex: 1 })
   })
 
-  it('40-beat grid: 4 phrases, phrase1 start t=2.0 beatIndex 1, phrase2 start t=6.0 beatIndex 1', () => {
+  it('40-beat grid: 5 phrases (last partial), phrase1 start t=2.0 beatIndex 1', () => {
     const out = resegmentSegments(grid40(), -4)
-    expect(out.length).toBe(4)
+    // 40 beats, startIndex=4 → 5 segments (bases 4,12,20,28,36; last has 4 beats)
+    expect(out.length).toBe(5)
     expect(out[0].startTime).toBeCloseTo(2.0, 6)
     expect(locateBeat(out, 2.0, 1.9)).toMatchObject({ activeSegment: 1, beatIndex: 1 })
     expect(locateBeat(out, 5.5, 5.4)).toMatchObject({ activeSegment: 1, beatIndex: 8 })
     expect(locateBeat(out, 6.0, 5.9)).toMatchObject({ activeSegment: 2, beatIndex: 1 })
+    // Last segment is partial but present
+    expect(out[out.length - 1].beats.length).toBe(4)
   })
 })
 
-describe('QA-independent: offset = +2 re-cuts to clean 1..8 phrases', () => {
-  it('offsetSegments[0].beats === [1.0..4.5]', () => {
+describe('QA-independent: offset = +2 produces 2 segments from 16-beat grid', () => {
+  it('segment 1 has 8 beats [1.0..4.5], segment 2 is partial (6 beats)', () => {
     const out = resegmentSegments(grid16(), 2)
-    expect(out.length).toBe(1)
+    // 16 beats, startIndex=2 → 2 segments (base=2: 8 beats, base=10: 6 beats)
+    expect(out.length).toBe(2)
     expect(out[0].beats).toEqual([1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5])
+    expect(out[1].beats.length).toBe(6)
   })
 
   it('phrase start t=1.0 reads beatIndex 1', () => {
@@ -76,11 +83,15 @@ describe('QA-independent: offset = 0 is equivalent to original grid', () => {
   })
 })
 
-describe('QA-independent: no partial phrases leak through', () => {
-  it('requires >=8 total beats; drops leading+trailing partials', () => {
+describe('QA-independent: short inputs produce short segments (not dropped)', () => {
+  it('empty input returns empty', () => {
     expect(resegmentSegments([], -4)).toEqual([])
-    expect(
-      resegmentSegments([{ index: 1, startTime: 0, endTime: 1.5, type: 'dance', beats: [0, 0.5, 1.0] }], 0),
-    ).toEqual([])
+  })
+
+  it('fewer than 8 beats produces one short segment instead of being dropped', () => {
+    const tiny = [{ index: 1, startTime: 0, endTime: 1.5, type: 'dance', beats: [0, 0.5, 1.0] }]
+    const out = resegmentSegments(tiny, 0)
+    expect(out.length).toBe(1)
+    expect(out[0].beats.length).toBe(3)
   })
 })
