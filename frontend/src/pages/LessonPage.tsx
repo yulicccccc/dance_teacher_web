@@ -362,14 +362,36 @@ export default function LessonPage() {
             />
           </Box>
           <Box sx={{ flexGrow: 1 }}>
-            <VideoPlayer
-              src={videoSrc}
-              mirror={mirror}
-              videoRef={videoRef}
-              beatIndex={beatIndex}
-              pulse={pulse}
-              stepBeat={stepBeat}
-            />
+            {/*
+              对照练习 = 原地左右分屏，不再弹窗。
+              `VideoPlayer` 始终保持挂载（对照时仅视觉隐藏），这样 `videoRef`
+              指向的 <video> 元素在开/关对照时都不会被卸载重建：播放进度、
+              倍速、`useBeatSync` / `usePlayPauseSync` 挂在元素上的监听器全部
+              原样保留，底部 ControlBar 的每一个按钮都继续驱动同一个老师视频。
+              CompareMode 只是把这个元素画进 canvas 左半边而已。
+            */}
+            <Box sx={{ display: compareOpen ? 'none' : 'block' }}>
+              <VideoPlayer
+                src={videoSrc}
+                mirror={mirror}
+                videoRef={videoRef}
+                beatIndex={beatIndex}
+                pulse={pulse}
+                stepBeat={stepBeat}
+              />
+            </Box>
+            {compareOpen && (
+              <CompareMode
+                open={compareOpen}
+                onClose={() => setCompareOpen(false)}
+                teacherVideoRef={videoRef}
+                src={videoSrc}
+                segment={resolveCompareSegment(offsetSegments, currentSegment)}
+                segmentIndex={currentSegment}
+                mirror={mirror}
+                videoName={result.videoName}
+              />
+            )}
             <ControlBar
               playing={playing}
               canPrev={currentSegment > 1}
@@ -386,21 +408,12 @@ export default function LessonPage() {
               onEnableAB={handleEnableAB}
               onDisableAB={handleDisableAB}
               onClearAB={handleClearAB}
-              onCompare={() => setCompareOpen(true)}
+              onCompare={() => setCompareOpen((o) => !o)}
+              comparing={compareOpen}
             />
           </Box>
         </Box>
       </Container>
-
-      <CompareMode
-        open={compareOpen}
-        onClose={() => setCompareOpen(false)}
-        src={videoSrc}
-        segment={resolveCompareSegment(offsetSegments, currentSegment)}
-        segmentIndex={currentSegment}
-        mirror={mirror}
-        videoName={result.videoName}
-      />
 
       <Dialog open={lowConfOpen} onClose={() => setLowConfOpen(false)}>
         <DialogTitle>节拍置信度较低</DialogTitle>

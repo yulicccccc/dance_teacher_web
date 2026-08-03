@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { createRoot, type Root } from 'react-dom/client'
+import { createRoot } from 'react-dom/client'
 import { act } from 'react'
-import { createElement } from 'react'
+import { createElement, createRef } from 'react'
 import CompareMode from '../src/components/CompareMode'
 import {
   resolveCompareSegment,
-  shouldAutoStop,
   compareFileName,
   pickMimeType,
 } from '../src/utils/compare'
@@ -48,7 +47,7 @@ let realCreateObjectURL: typeof URL.createObjectURL
 let realRevokeObjectURL: typeof URL.revokeObjectURL
 
 beforeAll(() => {
-  // rAF no-op so the draw loop body never runs (we drive auto-stop via timeupdate).
+  // rAF no-op so the draw loop body never runs (it only paints the canvas).
   realRaf = globalThis.requestAnimationFrame
   realCaf = globalThis.cancelAnimationFrame
   globalThis.requestAnimationFrame = (() => 0) as unknown as typeof requestAnimationFrame
@@ -110,9 +109,11 @@ afterAll(() => {
   URL.revokeObjectURL = realRevokeObjectURL
 })
 
+/** Returns the (stable) fake camera track so tests can assert it gets stopped. */
 function mockCamera(resolved: boolean) {
+  const track = { stop: vi.fn() }
   const fakeStream = {
-    getTracks: () => [{ stop: vi.fn() }],
+    getTracks: () => [track],
     getAudioTracks: () => [],
   }
   Object.defineProperty(navigator, 'mediaDevices', {
@@ -125,18 +126,41 @@ function mockCamera(resolved: boolean) {
           ),
     },
   })
+  return track
 }
 
 // ---- render helpers -------------------------------------------------------
+/**
+ * `CompareMode` no longer owns a teacher <video>: it reuses the page-level
+ * element (the same one the control bar drives). The harness therefore renders
+ * that element itself and hands the ref down, mirroring `LessonPage`.
+ */
 function mount(ui: Parameters<typeof createElement>[1]) {
   const container = document.createElement('div')
   document.body.appendChild(container)
+  const teacherVideoRef = createRef<HTMLVideoElement>()
   const root = createRoot(container)
+  const Harness = () =>
+    createElement(
+      'div',
+      null,
+      createElement('video', {
+        ref: teacherVideoRef,
+        'data-testid': 'teacher-video',
+        src: '/video/abc',
+      }),
+      createElement(CompareMode, {
+        ...(ui as Record<string, unknown>),
+        teacherVideoRef,
+      }),
+    )
   act(() => {
-    root.render(createElement(CompareMode, ui as Record<string, unknown>))
+    root.render(createElement(Harness))
   })
   return {
     root,
+    container,
+    teacherVideoRef,
     unmount: () => act(() => root.unmount()),
   }
 }
@@ -147,8 +171,13 @@ async function flush() {
   })
 }
 
-function findButton(text: string): HTMLButtonElement | undefined {
-  return Array.from(document.querySelectorAll('button')).find(
+/**
+ * Find a button by exact label. `scope` defaults to the whole document for the
+ * older tests; pass the mount's own `container` when asserting the ABSENCE of a
+ * button, since previous tests in this file leave their DOM mounted.
+ */
+function findButton(text: string, scope: ParentNode = document): HTMLButtonElement | undefined {
+  return Array.from(scope.querySelectorAll('button')).find(
     (b) => b.textContent === text,
   ) as HTMLButtonElement | undefined
 }
@@ -160,13 +189,6 @@ describe('compare utils', () => {
     expect(resolveCompareSegment(segs, 2)?.index).toBe(2)
     expect(resolveCompareSegment(segs, 99)?.index).toBe(1)
     expect(resolveCompareSegment([], 1)).toBeNull()
-  })
-
-  it('shouldAutoStop triggers at/after segment end', () => {
-    expect(shouldAutoStop(12, 12)).toBe(true)
-    expect(shouldAutoStop(11.9, 12)).toBe(false)
-    expect(shouldAutoStop(11.96, 12, 0.05)).toBe(true)
-    expect(shouldAutoStop(100, 12)).toBe(true)
   })
 
   it('compareFileName is filesystem-safe', () => {
@@ -196,6 +218,42 @@ describe('CompareMode', () => {
     expect(findButton('开始录制')).toBeTruthy()
   })
 
+  it('renders in place (no modal dialog) so the page controls stay reachable', async () => {
+    mockCamera(true)
+    mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+    // A MUI Dialog would render a [role="dialog"] portal into <body> and trap
+    // focus, hiding the segment list / control bar behind a backdrop.
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.querySelector('[data-testid="compare-panel"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="compare-canvas"]')).not.toBeNull()
+  })
+
+  it('stops the camera tracks when the panel is unmounted (exit compare)', async () => {
+    const track = mockCamera(true)
+    const { unmount } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+    expect(track.stop).not.toHaveBeenCalled()
+    unmount()
+    expect(track.stop).toHaveBeenCalled()
+  })
+
   it('shows an error when camera permission is denied', async () => {
     mockCamera(false)
     mount({
@@ -211,9 +269,11 @@ describe('CompareMode', () => {
     expect(document.body.textContent).toContain('摄像头权限被拒绝')
   })
 
-  it('records then auto-stops at segment end and offers a download', async () => {
+  it('keeps recording past the segment end — only a manual stop ends it', async () => {
     mockCamera(true)
-    mount({
+    // Scope every query to THIS mount: earlier tests leave their DOM in <body>,
+    // so a document-wide search would see their stale "开始录制" buttons.
+    const { container } = mount({
       open: true,
       onClose: () => {},
       src: '/video/abc',
@@ -224,7 +284,7 @@ describe('CompareMode', () => {
     })
     await flush()
 
-    const startBtn = findButton('开始录制')
+    const startBtn = findButton('开始录制', container)
     expect(startBtn).toBeTruthy()
     await act(async () => {
       startBtn!.click()
@@ -232,20 +292,82 @@ describe('CompareMode', () => {
     await flush()
 
     // recording phase
-    expect(findButton('停止录制')).toBeTruthy()
+    expect(findButton('停止录制', container)).toBeTruthy()
 
-    // drive the teacher playhead past the segment end and fire timeupdate
-    const tv = document.querySelector(
+    // Drive the teacher playhead WELL past the segment end (8..12) and fire
+    // timeupdate repeatedly — the learner is drilling the phrase over and over,
+    // so the recording must keep running instead of auto-stopping at the bar
+    // line the way it used to.
+    const tv = container.querySelector(
       '[data-testid="teacher-video"]',
     ) as HTMLVideoElement
     await act(async () => {
       tv.currentTime = 12.1
       tv.dispatchEvent(new Event('timeupdate'))
+      tv.currentTime = 30
+      tv.dispatchEvent(new Event('timeupdate'))
     })
     await flush()
 
-    // review phase: download link with the right filename
-    const a = document.querySelector('a[download="对比-小节3-my_lesson.webm"]')
+    expect(findButton('停止录制', container)).toBeTruthy()
+    expect(findButton('开始录制', container)).toBeUndefined()
+    expect(
+      container.querySelector('a[download="对比-小节3-my_lesson.webm"]'),
+    ).toBeNull()
+
+    // Manual stop -> review phase with the download link.
+    await act(async () => {
+      findButton('停止录制', container)!.click()
+    })
+    await flush()
+
+    const a = container.querySelector('a[download="对比-小节3-my_lesson.webm"]')
     expect(a).not.toBeNull()
+  })
+
+  it('ticks the 录制中 elapsed badge while recording and clears it on stop', async () => {
+    mockCamera(true)
+    const { container } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+
+    await act(async () => {
+      findButton('开始录制', container)!.click()
+    })
+    await flush()
+
+    const elapsedOf = (): number => {
+      const m = /录制中 · (\d+\.\d)s/.exec(container.textContent ?? '')
+      expect(m, 'recording badge should be on screen').not.toBeNull()
+      return parseFloat(m![1])
+    }
+    // Badge starts at zero...
+    expect(elapsedOf()).toBe(0)
+
+    // ...and advances on its own. The interval ticks every 100ms, so a 250ms
+    // window is enough to see it move. (Regression guard: `timerRef` used to be
+    // cleared but never *set*, so the badge was frozen at 0.0s forever — which
+    // now matters much more since recordings run for minutes, not one bar.)
+    const clearSpy = vi.spyOn(window, 'clearInterval')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 250))
+    })
+    expect(elapsedOf()).toBeGreaterThan(0)
+
+    // Stopping tears the interval down so it cannot leak past the recording.
+    await act(async () => {
+      findButton('停止录制', container)!.click()
+    })
+    await flush()
+    expect(clearSpy).toHaveBeenCalled()
+    clearSpy.mockRestore()
+    expect(container.textContent).not.toContain('录制中')
   })
 })

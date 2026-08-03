@@ -1,11 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import {
   Box,
   Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
   IconButton,
   Stack,
   Tooltip,
@@ -18,7 +14,8 @@ import DownloadIcon from '@mui/icons-material/Download'
 import ReplayIcon from '@mui/icons-material/Replay'
 import CloseIcon from '@mui/icons-material/Close'
 import type { Segment } from '../types/api'
-import { compareFileName, pickMimeType, shouldAutoStop } from '../utils/compare'
+import { useLessonStore } from '../store/lessonStore'
+import { compareFileName, pickMimeType } from '../utils/compare'
 
 type Phase = 'loading' | 'denied' | 'ready' | 'recording' | 'review' | 'unsupported'
 
@@ -27,8 +24,20 @@ const CANVAS_H = 720
 const HALF_W = CANVAS_W / 2
 
 interface Props {
+  /** Whether the split-screen comparison is active (drives the camera lifecycle). */
   open: boolean
   onClose: () => void
+  /**
+   * The PAGE-LEVEL teacher `<video>` ref — the very same element that
+   * `VideoPlayer` renders and that the bottom `ControlBar` drives.
+   *
+   * Reusing it (instead of mounting a private teacher video, as the old modal
+   * did) is what keeps play/pause, prev/next, speed, mirror, loop and A→B fully
+   * live while the comparison is on: there is simply nothing to synchronise,
+   * because both sides act on one element. The panel only *reads* it — it draws
+   * it into the left half of the canvas and pauses/seeks it around a recording.
+   */
+  teacherVideoRef: RefObject<HTMLVideoElement>
   /** Teacher video source URL (same-origin preferred so the canvas isn't tainted). */
   src: string
   /** The segment to record (one 8-beat phrase). */
@@ -62,9 +71,18 @@ function drawHalf(
   ctx.restore()
 }
 
+/**
+ * In-place side-by-side comparison panel (teacher left / learner right).
+ *
+ * Rendered INLINE in the lesson layout — it replaces the visible player area
+ * only, so the segment list on the left and the control bar underneath stay
+ * mounted and usable. Recording composites both halves into one canvas stream,
+ * so the produced webm is already side-by-side.
+ */
 export default function CompareMode({
   open,
   onClose,
+  teacherVideoRef,
   src,
   segment,
   segmentIndex,
@@ -72,11 +90,13 @@ export default function CompareMode({
   videoName,
 }: Props) {
   const [phase, setPhase] = useState<Phase>('loading')
-  const [rate, setRate] = useState(1)
   const [elapsed, setElapsed] = useState(0)
   const [errorMsg, setErrorMsg] = useState('')
 
-  const teacherRef = useRef<HTMLVideoElement | null>(null)
+  // Playback speed is owned by the control bar (store) — the comparison simply
+  // records at whatever speed the learner picked on the slider.
+  const playbackRate = useLessonStore((s) => s.playbackRate)
+
   const cameraRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -88,13 +108,14 @@ export default function CompareMode({
   const startTsRef = useRef<number>(0)
 
   // Refs mirroring mutable values so stable callbacks read fresh data.
-  const phaseRef = useRef<Phase>('loading')
   const segRef = useRef<Segment | null>(segment)
   segRef.current = segment
-
-  useEffect(() => {
-    phaseRef.current = phase
-  }, [phase])
+  // The mirror toggle now lives on the ALWAYS-VISIBLE control bar, so it can
+  // flip while the rAF draw loop is already running. Reading it through a ref
+  // (instead of closing over the prop) keeps the loop honest without having to
+  // tear it down and restart it on every toggle.
+  const mirrorRef = useRef(mirror)
+  mirrorRef.current = mirror
 
   // ---- stop helpers --------------------------------------------------------
   const stopRecorder = useCallback(() => {
@@ -117,9 +138,9 @@ export default function CompareMode({
       clearInterval(timerRef.current)
       timerRef.current = null
     }
-    const tv = teacherRef.current
+    const tv = teacherVideoRef.current
     if (tv) tv.pause()
-  }, [])
+  }, [teacherVideoRef])
 
   const stopEverything = useCallback(() => {
     stopLive()
@@ -130,46 +151,44 @@ export default function CompareMode({
       ;(cam.srcObject as MediaStream).getTracks().forEach((t) => t.stop())
       cam.srcObject = null
     }
+    // Also stop the tracks through our own handle: this panel is unmounted when
+    // the learner leaves compare mode, so by the time the effect cleanup runs
+    // `cameraRef.current` may already be null — without this the camera would
+    // keep its indicator light on.
+    streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
-    const tv = teacherRef.current
-    if (tv) {
-      tv.pause()
-      tv.removeAttribute('src')
-      tv.load()
-    }
+    // NOTE: the teacher <video> belongs to the PAGE (it is the main player), so
+    // we only pause it above. Clearing its `src`/calling load() here — as the
+    // old modal-owned teacher video did — would tear down the main player.
   }, [stopLive, stopRecorder])
 
-  // Auto-stop when the teacher playhead reaches the segment end.
-  const maybeStop = useCallback(() => {
-    const tv = teacherRef.current
-    if (phaseRef.current !== 'recording' || !tv) return
-    const end = segRef.current?.endTime ?? 0
-    if (shouldAutoStop(tv.currentTime, end)) stopRecorder()
-  }, [stopRecorder])
-
-  // Continuous preview + auto-stop check (runs while modal is open).
+  // Continuous side-by-side preview (runs while the panel is open).
+  //
+  // NOTE: recording is NOT bounded by the segment any more — the learner drills
+  // a phrase over and over and stops when THEY are done, so this loop only
+  // paints. (The old per-frame `maybeStop()` auto-stop check, and its
+  // `timeupdate` twin in start/stopRecording, were removed together.)
   const draw = useCallback(() => {
     const canvas = canvasRef.current
-    const tv = teacherRef.current
+    const tv = teacherVideoRef.current
     const cam = cameraRef.current
     const ctx = canvas?.getContext('2d')
     if (ctx && tv && cam) {
       ctx.fillStyle = '#000'
       ctx.fillRect(0, 0, CANVAS_W, CANVAS_H)
-      drawHalf(ctx, tv, 0, mirror)
-      drawHalf(ctx, cam, HALF_W, mirror)
+      drawHalf(ctx, tv, 0, mirrorRef.current)
+      drawHalf(ctx, cam, HALF_W, mirrorRef.current)
       ctx.fillStyle = 'rgba(255,255,255,0.9)'
       ctx.font = 'bold 30px sans-serif'
       ctx.fillText('老师', 24, 44)
       ctx.fillText('我', HALF_W + 24, 44)
     }
-    maybeStop()
     rafRef.current = requestAnimationFrame(draw)
-  }, [mirror, maybeStop])
+  }, [teacherVideoRef])
 
   // ---- start / stop recording ---------------------------------------------
   const startRecording = useCallback(async () => {
-    const tv = teacherRef.current
+    const tv = teacherVideoRef.current
     const canvas = canvasRef.current
     if (!tv || !canvas || !segRef.current) return
 
@@ -223,8 +242,8 @@ export default function CompareMode({
     recorderRef.current = rec
 
     tv.currentTime = segRef.current.startTime
-    tv.playbackRate = rate
-    tv.addEventListener('timeupdate', maybeStop)
+    // Record at the speed selected on the control-bar slider (shared store).
+    tv.playbackRate = playbackRate
     try {
       await tv.play()
     } catch {
@@ -233,15 +252,25 @@ export default function CompareMode({
     rec.start()
     startTsRef.current = Date.now()
     setElapsed(0)
-    phaseRef.current = 'recording'
+    // Tick the on-canvas "录制中 · x.xs" badge. Wall-clock elapsed (not the
+    // teacher's `currentTime`) is what the learner cares about, and it stays
+    // honest at any playbackRate. `stopLive` clears this interval on every exit
+    // path (manual stop, panel close, unmount).
+    timerRef.current = window.setInterval(
+      () => setElapsed((Date.now() - startTsRef.current) / 1000),
+      100,
+    )
     setPhase('recording')
-  }, [maybeStop, rate, stopLive])
+  }, [playbackRate, stopLive, teacherVideoRef])
 
+  /**
+   * Stop the recording. This is the ONLY way a recording ends: it runs for as
+   * long as the learner keeps drilling (across segment boundaries, loops and
+   * however many repetitions they want) until they press 「停止录制」.
+   */
   const stopRecording = useCallback(() => {
-    const tv = teacherRef.current
-    if (tv) tv.removeEventListener('timeupdate', maybeStop)
     stopRecorder()
-  }, [maybeStop, stopRecorder])
+  }, [stopRecorder])
 
   const reRecord = useCallback(() => {
     if (urlRef.current) {
@@ -249,24 +278,22 @@ export default function CompareMode({
       urlRef.current = null
     }
     chunksRef.current = []
-    const tv = teacherRef.current
+    const tv = teacherVideoRef.current
     if (tv) {
       tv.currentTime = segRef.current?.startTime ?? 0
       tv.pause()
     }
     setElapsed(0)
-    phaseRef.current = 'ready'
     setPhase('ready')
     rafRef.current = requestAnimationFrame(draw)
-  }, [draw])
+  }, [draw, teacherVideoRef])
 
-  // ---- camera acquisition (on open) ---------------------------------------
+  // ---- camera acquisition (while the panel is open) ------------------------
   useEffect(() => {
     if (!open) return
     setPhase('loading')
     setErrorMsg('')
     setElapsed(0)
-    setRate(1)
 
     const supported =
       !!navigator.mediaDevices?.getUserMedia &&
@@ -298,18 +325,18 @@ export default function CompareMode({
           cam.srcObject = stream
           void cam.play().catch(() => undefined)
         }
-        const tv = teacherRef.current
+        // The teacher element is the page's own player and already carries
+        // `src` — just park its playhead at the start of the segment we are
+        // about to compare (the control bar can move it again at any time).
+        const tv = teacherVideoRef.current
         if (tv) {
-          tv.src = src
-          tv.muted = false
-          const onMeta = () => {
+          const parkAtSegmentStart = () => {
             tv.currentTime = segRef.current?.startTime ?? 0
             tv.pause()
           }
-          tv.addEventListener('loadedmetadata', onMeta, { once: true })
-          tv.load()
+          if (tv.readyState >= 1) parkAtSegmentStart()
+          else tv.addEventListener('loadedmetadata', parkAtSegmentStart, { once: true })
         }
-        phaseRef.current = 'ready'
         setPhase('ready')
         rafRef.current = requestAnimationFrame(draw)
       })
@@ -332,7 +359,6 @@ export default function CompareMode({
         URL.revokeObjectURL(urlRef.current)
         urlRef.current = null
       }
-      phaseRef.current = 'loading'
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, src])
@@ -346,153 +372,119 @@ export default function CompareMode({
     onClose()
   }, [onClose, stopEverything])
 
-  const speeds = [
-    { label: '0.5x', value: 0.5 },
-    { label: '0.75x', value: 0.75 },
-    { label: '1x', value: 1 },
-  ]
+  const statusText =
+    phase === 'loading'
+      ? '正在打开摄像头…'
+      : phase === 'denied'
+        ? errorMsg
+        : '当前浏览器不支持摄像头录制（需要 getUserMedia + MediaRecorder + canvas.captureStream）。请用最新版 Chrome/Edge 打开本页。'
+  const statusColor =
+    phase === 'denied' ? 'error.main' : phase === 'unsupported' ? 'warning.main' : 'common.white'
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
-      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <VideocamIcon />
-        对照练习 · 小节 {segmentIndex}
+    <Box
+      data-testid="compare-panel"
+      sx={{
+        border: 1,
+        borderColor: 'divider',
+        borderRadius: 3,
+        p: { xs: 1.5, md: 2 },
+        bgcolor: 'background.paper',
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+        <VideocamIcon color="secondary" />
+        <Typography variant="subtitle1" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+          对照练习 · 小节 {segmentIndex}
+        </Typography>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: { xs: 'none', md: 'block' } }}
+        >
+          左：老师 / 右：我 —— 下方控制条照常驱动老师视频
+        </Typography>
         <IconButton
           onClick={handleClose}
           sx={{ ml: 'auto' }}
-          aria-label="关闭"
+          aria-label="退出对照"
           size="small"
         >
           <CloseIcon />
         </IconButton>
-      </DialogTitle>
+      </Box>
 
-      <DialogContent>
-        {phase === 'loading' && (
-          <Typography>正在打开摄像头…</Typography>
-        )}
-        {phase === 'denied' && (
-          <Typography color="error">{errorMsg}</Typography>
-        )}
-        {phase === 'unsupported' && (
-          <Typography color="warning.main">
-            当前浏览器不支持摄像头录制（需要 getUserMedia + MediaRecorder +
-            canvas.captureStream）。请用最新版 Chrome/Edge 打开本页。
-          </Typography>
-        )}
-
+      <Box
+        sx={{
+          position: 'relative',
+          width: '100%',
+          aspectRatio: '16 / 9',
+          bgcolor: '#000',
+          borderRadius: 2,
+          overflow: 'hidden',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
         {(phase === 'ready' || phase === 'recording') && (
           <>
-            <Box
-              sx={{
-                position: 'relative',
-                width: '100%',
-                aspectRatio: '16 / 9',
-                bgcolor: '#000',
-                borderRadius: 2,
-                overflow: 'hidden',
-              }}
-            >
-              <canvas
-                ref={canvasRef}
-                width={CANVAS_W}
-                height={CANVAS_H}
-                data-testid="compare-canvas"
-                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-              />
-              {phase === 'recording' && (
-                <Box
-                  sx={{
-                    position: 'absolute',
-                    top: 12,
-                    left: 12,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1,
-                    color: 'common.white',
-                    bgcolor: 'rgba(0,0,0,0.45)',
-                    px: 1.5,
-                    py: 0.5,
-                    borderRadius: 1,
-                  }}
-                >
-                  <FiberManualRecordIcon sx={{ color: 'red', fontSize: 16 }} />
-                  <Typography variant="body2">
-                    录制中 · {elapsed.toFixed(1)}s
-                  </Typography>
-                </Box>
-              )}
-            </Box>
-
-            {phase === 'ready' && (
-              <Stack
-                direction="row"
-                spacing={1}
-                alignItems="center"
-                sx={{ mt: 2 }}
+            <canvas
+              ref={canvasRef}
+              width={CANVAS_W}
+              height={CANVAS_H}
+              data-testid="compare-canvas"
+              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            />
+            {phase === 'recording' && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 12,
+                  left: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  color: 'common.white',
+                  bgcolor: 'rgba(0,0,0,0.45)',
+                  px: 1.5,
+                  py: 0.5,
+                  borderRadius: 1,
+                }}
               >
-                <Typography variant="body2" color="text.secondary">
-                  对照速度
+                <FiberManualRecordIcon sx={{ color: 'red', fontSize: 16 }} />
+                <Typography variant="body2">
+                  录制中 · {elapsed.toFixed(1)}s
                 </Typography>
-                {speeds.map((s) => (
-                  <Button
-                    key={s.value}
-                    size="small"
-                    variant={rate === s.value ? 'contained' : 'outlined'}
-                    onClick={() => {
-                      setRate(s.value)
-                      const tv = teacherRef.current
-                      if (tv) tv.playbackRate = s.value
-                    }}
-                  >
-                    {s.label}
-                  </Button>
-                ))}
-                <Tooltip title="从本小节开头播放，到本小节结束自动停止录制">
-                  <Typography variant="caption" color="text.secondary">
-                    一小节结束自动停
-                  </Typography>
-                </Tooltip>
-              </Stack>
+              </Box>
             )}
           </>
         )}
 
         {phase === 'review' && urlRef.current && (
-          <Box
-            sx={{
-              width: '100%',
-              aspectRatio: '16 / 9',
-              bgcolor: '#000',
-              borderRadius: 2,
-              overflow: 'hidden',
-            }}
-          >
-            <video
-              src={urlRef.current}
-              controls
-              data-testid="review-video"
-              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-            />
-          </Box>
+          <video
+            src={urlRef.current}
+            controls
+            data-testid="review-video"
+            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+          />
         )}
 
-        {/* Hidden source videos (kept mounted so refs persist). */}
-        <video
-          ref={teacherRef}
-          data-testid="teacher-video"
-          style={{ display: 'none' }}
-          playsInline
-        />
-        <video
-          ref={cameraRef}
-          style={{ display: 'none' }}
-          playsInline
-          muted
-        />
-      </DialogContent>
+        {(phase === 'loading' || phase === 'denied' || phase === 'unsupported') && (
+          <Typography sx={{ px: 3, textAlign: 'center', color: statusColor }}>
+            {statusText}
+          </Typography>
+        )}
+      </Box>
 
-      <DialogActions sx={{ px: 3, pb: 2 }}>
+      <Stack
+        direction="row"
+        spacing={1}
+        alignItems="center"
+        flexWrap="wrap"
+        useFlexGap
+        sx={{ mt: 1.5 }}
+      >
         {phase === 'ready' && (
           <Button
             variant="contained"
@@ -523,19 +515,25 @@ export default function CompareMode({
             >
               下载对比视频
             </Button>
-            <Button
-              startIcon={<ReplayIcon />}
-              variant="outlined"
-              onClick={reRecord}
-            >
+            <Button startIcon={<ReplayIcon />} variant="outlined" onClick={reRecord}>
               重新录制
             </Button>
           </>
         )}
-        <Button onClick={handleClose} color="inherit">
-          关闭
+        {phase === 'ready' && (
+          <Tooltip title="从本小节开头播放，之后不会自动停止：可以反复练很多遍、跨小节循环，直到你点「停止录制」为止；速度用下方控制条的滑条调整">
+            <Typography variant="caption" color="text.secondary">
+              持续录制 · 当前 {playbackRate.toFixed(2)}x 倍速 · 手动停止
+            </Typography>
+          </Tooltip>
+        )}
+        <Button onClick={handleClose} color="inherit" sx={{ ml: 'auto' }}>
+          退出对照
         </Button>
-      </DialogActions>
-    </Dialog>
+      </Stack>
+
+      {/* Hidden camera source (the teacher source is the page's own player). */}
+      <video ref={cameraRef} style={{ display: 'none' }} playsInline muted />
+    </Box>
   )
 }

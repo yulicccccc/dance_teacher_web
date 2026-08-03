@@ -24,19 +24,6 @@ export function resolveCompareSegment(
 }
 
 /**
- * Whether the teacher playhead has reached (or passed) the segment end, so the
- * comparison recording should auto-stop. `eps` absorbs floating-point drift
- * across browsers.
- */
-export function shouldAutoStop(
-  currentTime: number,
-  endTime: number,
-  eps = 0.05,
-): boolean {
-  return currentTime >= endTime - eps
-}
-
-/**
  * Build a safe download filename for the composited comparison video, e.g.
  * `对比-小节3-my_lesson.webm`. Strips filesystem-unsafe characters.
  */

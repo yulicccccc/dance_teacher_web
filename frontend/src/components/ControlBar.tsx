@@ -17,6 +17,7 @@ import ReplayIcon from '@mui/icons-material/Replay'
 import FlipIcon from '@mui/icons-material/Flip'
 import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver'
 import VideocamIcon from '@mui/icons-material/Videocam'
+import VideocamOffIcon from '@mui/icons-material/VideocamOff'
 import { useLessonStore } from '../store/lessonStore'
 import { findBeatAt } from '../utils/segmentMath'
 import type { Segment, ABLoop } from '../types/api'
@@ -39,8 +40,10 @@ interface Props {
   onEnableAB: () => void
   onDisableAB: () => void
   onClearAB: () => void
-  /** Open the camera comparison modal (teacher left / learner right). */
+  /** Toggle the in-place split-screen comparison (teacher left / learner right). */
   onCompare: () => void
+  /** True while the split-screen comparison is showing, so the button reads as a toggle. */
+  comparing?: boolean
 }
 
 /**
@@ -83,6 +86,7 @@ export default function ControlBar({
   onDisableAB,
   onClearAB,
   onCompare,
+  comparing = false,
 }: Props) {
   const playbackRate = useLessonStore((s) => s.playbackRate)
   const setPlaybackRate = useLessonStore((s) => s.setPlaybackRate)
@@ -191,14 +195,20 @@ export default function ControlBar({
             口令
           </Button>
         </Tooltip>
-        <Tooltip title="调用摄像头，和老师同屏对比录制（一小节结束自动停止，可下载）">
+        <Tooltip
+          title={
+            comparing
+              ? '退出对照分屏，恢复普通播放'
+              : '原地左右分屏对比（左老师 / 右自己，可录制下载；再次点击退出）'
+          }
+        >
           <Button
-            variant="contained"
+            variant={comparing ? 'outlined' : 'contained'}
             color="secondary"
-            startIcon={<VideocamIcon />}
+            startIcon={comparing ? <VideocamOffIcon /> : <VideocamIcon />}
             onClick={onCompare}
           >
-            对照练习
+            {comparing ? '退出对照' : '对照练习'}
           </Button>
         </Tooltip>
       </Stack>
