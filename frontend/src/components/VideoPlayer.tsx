@@ -12,8 +12,13 @@ interface Props {
   pulse: boolean
   /** Double-click gesture: seek to the adjacent beat and pause (1 = next, -1 = previous). */
   stepBeat?: (dir: 1 | -1) => void
-  /** Beat dot click-through from the overlay (0-based dot index). */
+  /** Beat dot click-through from the overlay (0-based dot index). When the
+   *  overlay is used as a *segment* selector the parent passes `total` equal to
+   *  the segment count so the dot count matches the selectable sections. */
   onDotClick?: (segmentIndex: number) => void
+  /** Number of overlay dots. Defaults to 8 (a single phrase's beat count); the
+   *  parent passes the segment count when the dots act as a section selector. */
+  total?: number
 }
 
 /**
@@ -26,7 +31,7 @@ interface Props {
  * the beat overlay scale together with the video; `requestFullscreen` only
  * enlarges the container and leaves the inner layout untouched.
  */
-export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse, stepBeat, onDotClick }: Props) {
+export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse, stepBeat, onDotClick, total }: Props) {
   const mirrorSx: SxProps<Theme> = mirror
     ? { transform: 'scaleX(-1)' }
     : { transform: 'none' }
@@ -88,7 +93,7 @@ export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse, s
       <Box className="w-full h-full" sx={mirrorSx}>
         <video ref={videoRef} src={src} className="w-full h-full object-contain" playsInline />
       </Box>
-      <BeatOverlay beatIndex={beatIndex} pulse={pulse} mirror={mirror} onDotClick={onDotClick} />
+      <BeatOverlay beatIndex={beatIndex} pulse={pulse} mirror={mirror} total={total} onDotClick={onDotClick} />
       <IconButton
         onClick={toggleFullscreen}
         // Swallow double-clicks so rapidly toggling fullscreen does not bubble

@@ -413,7 +413,11 @@ export default function LessonPage() {
                 beatIndex={beatIndex}
                 pulse={pulse}
                 stepBeat={stepBeat}
-                onDotClick={goToSegment}
+                // The overlay dots are 0-based; `Segment.index` (and therefore
+                // `goToSegment`) is 1-based, so convert here. `total` makes the
+                // dot count equal the number of selectable sections.
+                total={offsetSegments.length}
+                onDotClick={(i) => goToSegment(i + 1)}
               />
             </Box>
             {compareOpen && (

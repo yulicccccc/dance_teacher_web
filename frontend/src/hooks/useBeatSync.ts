@@ -565,16 +565,21 @@ export function useBeatSync(
   // edge iteration reset is handled inside `tick` via `wasABEnabledRef`. We use
   // the isolated `seekingForAbRef` guard so the resulting `seeked` is not
   // mistaken for a user drag (which would re-lock the single/multi loop target).
+  // Skipped entirely while the engine is inactive (compare mode: the same
+  // <video> is shown side-by-side and keeps playing — re-arming here would seek
+  // + play and fight the comparison playback). Re-runs when `active` flips
+  // false→true so the loop cleanly resumes after compare mode ends.
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
+    if (!activeRef.current) return
     const ab = abLoop
     if (ab && ab.enabled && ab.bTime > ab.aTime && video.currentTime > ab.bTime) {
       seekingForAbRef.current = true
       video.currentTime = ab.aTime
       void video.play().catch(() => undefined)
     }
-  }, [abLoop, videoRef])
+  }, [abLoop, active, videoRef])
 
   // Reset the loop repetition counter whenever the limit changes (slider
   // drag / toggle) so a new count always starts counting from zero.
