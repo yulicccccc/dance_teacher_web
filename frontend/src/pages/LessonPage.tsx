@@ -23,6 +23,7 @@ import SegmentList from '../components/SegmentList'
 import ControlBar from '../components/ControlBar'
 import CompareMode from '../components/CompareMode'
 import ProgressHeader from '../components/ProgressHeader'
+import BeatInfoCard from '../components/BeatInfoCard'
 import { resegmentSegments, findBeatAt } from '../utils/segmentMath'
 import { resolveCompareSegment } from '../utils/compare'
 import { pickChineseVoice } from '../utils/voice'
@@ -43,6 +44,7 @@ export default function LessonPage() {
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [recomputing, setRecomputing] = useState(false)
   const [lowConfOpen, setLowConfOpen] = useState(false)
   const [firstBeat, setFirstBeat] = useState('0')
   const [snack, setSnack] = useState<string | null>(null)
@@ -318,6 +320,24 @@ export default function LessonPage() {
     }
   }
 
+  // Manual BPM override (the new "用此 BPM 重算" path). The user types a corrected
+  // tempo in the BeatInfoCard; we re-derive the segments at exactly that BPM via
+  // the backend's `fixedBpm` mode. `result.bpm` / `result.confidence` are shown
+  // by the card from the regular analysis result, independent of beatLowConfidence.
+  const handleApplyBpm = async (bpm: number) => {
+    if (!taskId) return
+    setRecomputing(true)
+    try {
+      const res = await apiClient.recompute(taskId, { mode: 'fixedBpm', bpm })
+      setResult(res)
+      setSnack(`已用 BPM ${bpm} 重新生成分段`)
+    } catch (e) {
+      setError(extractApiError(e).message)
+    } finally {
+      setRecomputing(false)
+    }
+  }
+
   if (loading) {
     return (
       <Container sx={{ py: 10, textAlign: 'center' }}>
@@ -349,6 +369,14 @@ export default function LessonPage() {
         onBack={() => navigate('/progress')}
       />
       <Container maxWidth="xl">
+        {/* Persistent beat-info card: detected BPM + confidence, with a manual
+            BPM override that re-derives the 8-beat segments at the typed tempo. */}
+        <BeatInfoCard
+          bpm={result.bpm}
+          confidence={result.confidence}
+          loading={recomputing}
+          onApplyBpm={handleApplyBpm}
+        />
         <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3 }}>
           <Box sx={{ width: { md: 280 }, flexShrink: 0 }}>
             <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>

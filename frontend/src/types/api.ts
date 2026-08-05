@@ -61,9 +61,15 @@ export interface ApiError {
   data: null
 }
 
-export type RecomputeMode = 'auto' | 'fixed120' | 'manual_first_beat'
+export type RecomputeMode =
+  | 'auto'
+  | 'fixed120'
+  | 'fixedBpm'
+  | 'manual_first_beat'
 
 export interface RecomputeRequest {
   mode: RecomputeMode
   firstBeatTime?: number
+  /** User-typed BPM for the `fixedBpm` mode (range 40-300, validated server-side). */
+  bpm?: number
 }
