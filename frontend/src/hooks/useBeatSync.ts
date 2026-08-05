@@ -154,6 +154,23 @@ export function useBeatSync(
   onSegmentChange?: (segmentIndex: number) => void,
   abLoop: ABLoop | null = null,
   loopCount: number | null = null,
+  /**
+   * Loop flavour (Part 2). `'single'` loops the segment the playhead is in
+   * (classic behaviour); `'multi'` cycles through the subset of segments the
+   * user ticked in `loopSegmentIds`, each padded, wrapping the last back to the
+   * first. Defaults to `'single'` so every existing caller is unaffected.
+   */
+  loopMode: 'single' | 'multi' = 'single',
+  /** Segment indices (1-based, matching `Segment.index`) ticked for multi-loop. */
+  loopSegmentIds: number[] = [],
+  /**
+   * Engine "active" flag. Compare-mode hides the player (`display:none`) but the
+   * SAME <video> keeps playing side-by-side; when `false` the engine must NOT
+   * issue any loop/AB seek+play, or it would fight the comparison playback — it
+   * only keeps `prevTimeRef` fresh so re-activation never emits a phantom pulse.
+   * Defaults to `true` so every existing caller is unaffected.
+   */
+  active: boolean = true,
 ): SyncResult {
   const [beatIndex, setBeatIndex] = useState(0)
   const [pulse, setPulse] = useState(false)
@@ -223,6 +240,33 @@ export function useBeatSync(
   // Tracks the previous-frame AB-enable state to detect its rising edge.
   const wasABEnabledRef = useRef(false)
 
+  // ---- Multi-segment loop (Part 2) ------------------------------------------
+  // Which loop flavour is active (mirrors the `loopMode` prop). When `'multi'`
+  // and the selection is non-empty we cycle through the ticked segments; an
+  // empty selection degrades to the classic single-segment loop.
+  const loopModeRef = useRef(loopMode)
+  loopModeRef.current = loopMode
+  // The current multi-segment selection (mirrors the `loopSegmentIds` prop).
+  const loopSegmentIdsRef = useRef(loopSegmentIds)
+  loopSegmentIdsRef.current = loopSegmentIds
+  // Whether the engine is "active" (mirrors `active`). Compare-mode shows the
+  // shared <video> side-by-side and keeps playing; when inactive we must NOT
+  // drive any loop/AB seek+play, or it would fight the comparison playback.
+  const activeRef = useRef(active)
+  activeRef.current = active
+  // Materialised list of the selected segments (in selection order). Rebuilt
+  // whenever the id list changes; empty when the selection is empty/degraded.
+  const loopTargetsRef = useRef<Segment[]>([])
+  // Cursor into `loopTargetsRef` for the segment currently being looped.
+  const loopCursorRef = useRef(0)
+  // Serialised id list; lets the rAF loop cheaply detect a selection change and
+  // rebuild `loopTargetsRef` + re-anchor the cursor without diffing each frame.
+  const loopIdsKeyRef = useRef('')
+  // Isolated guard flag for the custom A→B loop's OWN programmatic seek-back,
+  // kept separate from `seekingForLoopRef` so the two loop kinds never
+  // mis-classify each other's seeks (T3 hardening).
+  const seekingForAbRef = useRef(false)
+
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
@@ -230,24 +274,36 @@ export function useBeatSync(
     const onSeeked = () => {
       const t = video.currentTime
       if (seekingForLoopRef.current) {
-        // This is the loop's OWN programmatic loop-back. The landing point may
-        // differ by tens of ms from the requested `loopStart` (frame-level
-        // precision of a real <video>), which is now irrelevant because we know
-        // WHO initiated the seek via the guard flag. Just reset prevTime so the
-        // next frame does not re-detect the seam — do NOT re-lock the target,
-        // otherwise we would latch onto the previous phrase and cascade
-        // backward through the timeline.
+        // This is the loop's OWN programmatic loop-back (single OR multi). The
+        // landing point may differ by tens of ms from the requested loopStart
+        // (frame-level precision of a real <video>), which is now irrelevant
+        // because we know WHO initiated the seek via the guard flag. Just reset
+        // prevTime so the next frame does not re-detect the seam — do NOT
+        // re-lock the target, otherwise we would latch onto the previous phrase
+        // and cascade backward through the timeline. (multi: the new target was
+        // already set synchronously inside `tick`.)
         seekingForLoopRef.current = false
         prevTimeRef.current = t
+      } else if (seekingForAbRef.current) {
+        // This is the custom A→B loop's OWN programmatic seek-back. Isolated
+        // from the single/multi loop guard so the two never mis-classify each
+        // other's seeks (T3 hardening).
+        seekingForAbRef.current = false
+        prevTimeRef.current = t
       } else {
-        // Genuine user seek (or initial navigation): re-lock the single-segment
-        // loop target to whatever segment the playhead now sits in. Using the
-        // same time for prev/cur yields no crossed boundary, so no phantom
-        // pulse either.
+        // Genuine user seek (or initial navigation): re-lock the single / multi
+        // loop target to whatever segment the playhead now sits in. For multi
+        // mode we also re-anchor the cursor onto the selected segment containing
+        // the new position (manual seek re-anchor). Using the same time for
+        // prev/cur yields no crossed boundary, so no phantom pulse either.
         prevTimeRef.current = t
         if (loopRef.current) {
           const loc = locateBeat(segments, t, t)
           loopTargetRef.current = loc.activeSegment || null
+          const idx = loopTargetsRef.current.findIndex(
+            (s) => s.index === loc.activeSegment,
+          )
+          if (idx >= 0) loopCursorRef.current = idx
         }
         // Any genuine user reposition restarts the repetition count from zero.
         loopIterationRef.current = 0
@@ -260,6 +316,17 @@ export function useBeatSync(
       if (v) {
         const cur = v.currentTime
         const prev = prevTimeRef.current
+        // Compare-mode (inactive): the shared <video> is shown side-by-side and
+        // keeps playing. Do NOT issue any loop/AB seek+play — just keep the
+        // previous-frame time fresh so reactivating never spawns a phantom
+        // pulse. Segment/beat display is skipped too (overlay hidden; the same
+        // frame drives the comparison canvas). The rAF chain is re-scheduled
+        // below before returning so the loop never dies.
+        if (!activeRef.current) {
+          prevTimeRef.current = cur
+          rafRef.current = requestAnimationFrame(tick)
+          return
+        }
         const offsetSeconds = beatDurationRef.current > 0 ? beatOffsetRef.current * beatDurationRef.current : 0
 
         // The active-segment highlight and the single-segment loop clamp are
@@ -273,7 +340,14 @@ export function useBeatSync(
         // the segment the playhead currently sits in, rather than waiting for
         // the next boundary crossing (which would risk locking the NEXT bar).
         if (loopRef.current && !wasLoopRef.current && seg) {
-          loopTargetRef.current = realSegIndex
+          // Multi-segment loop with a non-empty selection: the rAF target-refresh
+          // (below) builds `loopTargetsRef` from `loopSegmentIds` and re-anchors
+          // the cursor onto the segment the playhead is IN, so we leave
+          // `loopTargetRef` null here and let that path seed it. Single loop (or
+          // degraded multi) locks straight onto the current segment.
+          if (!(loopModeRef.current === 'multi' && loopSegmentIdsRef.current.length > 0)) {
+            loopTargetRef.current = realSegIndex
+          }
           // A freshly enabled single-segment loop starts a new repetition count.
           loopIterationRef.current = 0
         }
@@ -340,7 +414,9 @@ export function useBeatSync(
               if (!reached) {
                 // Mark as programmatic so the resulting `seeked` is not mistaken
                 // for a user drag (which would re-lock the single-segment target).
-                seekingForLoopRef.current = true
+                // Uses the ISOLATED AB guard (seekingForAbRef) so the AB loop
+                // never cross-talks with the single/multi loop guard (T3).
+                seekingForAbRef.current = true
                 v.currentTime = ab.aTime
                 // A programmatic seek pauses the element internally; resume so the
                 // loop keeps running instead of freezing on the seam.
@@ -350,10 +426,49 @@ export function useBeatSync(
               // reached: leave newPrev = cur so the playhead continues past
               // bTime -> the loop exits and the video keeps playing forward.
             }
-          } else           if (loopRef.current) {
+          } else if (loopRef.current) {
+            // Single- or multi-segment loop. Multi runs only when in multi mode
+            // AND a non-empty selection exists; otherwise we fall back to the
+            // existing single-segment loop so an empty multi selection degrades
+            // gracefully to the familiar behaviour.
+            //
+            // Refresh the multi-segment target list when the selection changes
+            // (cheap string-key diff). On change we rebuild the list and
+            // re-anchor the cursor onto the segment the playhead currently sits
+            // in, so an in-flight loop snaps to the new selection.
+            const idsKey =
+              loopModeRef.current === 'multi'
+                ? loopSegmentIdsRef.current.join(',')
+                : ''
+            if (idsKey !== loopIdsKeyRef.current) {
+              loopIdsKeyRef.current = idsKey
+              loopTargetsRef.current = loopSegmentIdsRef.current
+                .map((id) => segments.find((s) => s.index === id))
+                .filter((s): s is Segment => s != null)
+              if (loopCursorRef.current >= loopTargetsRef.current.length) {
+                loopCursorRef.current = 0
+              }
+              const loc = locateBeat(segments, cur, prev)
+              const idx = loopTargetsRef.current.findIndex(
+                (s) => s.index === loc.activeSegment,
+              )
+              if (idx >= 0) loopCursorRef.current = idx
+            }
+            const multi =
+              loopModeRef.current === 'multi' &&
+              loopTargetsRef.current.length > 0
+
             if (loopTargetRef.current === null) {
-              const leftSeg = computeLoopSegment(segments, prev, cur)
-              if (leftSeg) loopTargetRef.current = leftSeg.index
+              if (multi) {
+                // Seed from the current cursor target (re-anchored above).
+                const tgt = loopTargetsRef.current[loopCursorRef.current]
+                loopTargetRef.current = tgt ? tgt.index : null
+              } else {
+                // Single-segment loop: lock onto the segment whose END we just
+                // crossed (Bug A semantics).
+                const leftSeg = computeLoopSegment(segments, prev, cur)
+                if (leftSeg) loopTargetRef.current = leftSeg.index
+              }
             }
             const target =
               segments.find((s) => s.index === loopTargetRef.current) ?? null
@@ -373,18 +488,47 @@ export function useBeatSync(
                   loopCountRef.current != null &&
                   loopIterationRef.current >= loopCountRef.current
                 if (!reached) {
-                  // Flag that the upcoming seek is the loop's OWN programmatic
-                  // loop-back, so the `seeked` listener recognises it (and does
-                  // NOT re-lock the target into the previous phrase's lead-in,
-                  // which would cascade backward). We use a guard flag rather than
-                  // comparing the seek landing point to `loopStart`, because real
-                  // <video> currentTime precision (±16–33ms) dwarfs any fixed tol.
-                  seekingForLoopRef.current = true
-                  v.currentTime = bounds.loopStart
-                  // A programmatic seek triggers an internal pause on <video>;
-                  // resume playback so the loop keeps running instead of freezing.
-                  void v.play().catch(() => undefined)
-                  newPrev = bounds.loopStart - 0.001
+                  if (multi) {
+                    // Advance to the NEXT selected segment (wrap last -> first)
+                    // and loop back to ITS padded start — the playhead skates
+                    // over unselected segments in between and the whole
+                    // selection repeats in order. We seek to the NEXT target's
+                    // start (not the current one's) so the multi loop never
+                    // traps on the last segment.
+                    loopCursorRef.current =
+                      (loopCursorRef.current + 1) %
+                      loopTargetsRef.current.length
+                    const nextTgt =
+                      loopTargetsRef.current[loopCursorRef.current]
+                    loopTargetRef.current = nextTgt ? nextTgt.index : null
+                    const nextBounds = nextTgt
+                      ? computePaddedLoopBounds(
+                          nextTgt,
+                          segments,
+                          beatDurationRef.current,
+                        )
+                      : bounds
+                    // Flag this as the loop's OWN programmatic loop-back so the
+                    // `seeked` listener recognises it (no backward cascade).
+                    seekingForLoopRef.current = true
+                    v.currentTime = nextBounds.loopStart
+                    void v.play().catch(() => undefined)
+                    newPrev = nextBounds.loopStart - 0.001
+                  } else {
+                    // Flag that the upcoming seek is the loop's OWN programmatic
+                    // loop-back, so the `seeked` listener recognises it (and
+                    // does NOT re-lock the target into the previous phrase's
+                    // lead-in, which would cascade backward). We use a guard flag
+                    // rather than comparing the seek landing point to
+                    // `loopStart`, because real <video> currentTime precision
+                    // (±16–33ms) dwarfs any fixed tol.
+                    seekingForLoopRef.current = true
+                    v.currentTime = bounds.loopStart
+                    // A programmatic seek triggers an internal pause on <video>;
+                    // resume playback so the loop keeps running instead of freezing.
+                    void v.play().catch(() => undefined)
+                    newPrev = bounds.loopStart - 0.001
+                  }
                 }
                 // reached: leave newPrev = cur (set above) so the playhead
                 // continues past loopEnd -> the loop exits and the video keeps
@@ -392,9 +536,12 @@ export function useBeatSync(
               }
             }
           } else {
-            // Looping disabled -> drop the locked target so it re-acquires on
-            // the next enable.
+            // Looping disabled -> drop the locked target and the multi state so
+            // they re-acquire on the next enable.
             loopTargetRef.current = null
+            loopTargetsRef.current = []
+            loopCursorRef.current = 0
+            loopIdsKeyRef.current = ''
           }
           prevTimeRef.current = newPrev
         } else {
@@ -411,6 +558,23 @@ export function useBeatSync(
       if (pulseTimer.current) window.clearTimeout(pulseTimer.current)
     }
   }, [segments, videoRef])
+
+  // Re-arm the custom A→B loop when it is enabled but the playhead is already
+  // past `bTime`: jump back to `aTime` so the loop starts cleanly instead of
+  // waiting for the playhead to loop around the whole media (T3). The rising
+  // edge iteration reset is handled inside `tick` via `wasABEnabledRef`. We use
+  // the isolated `seekingForAbRef` guard so the resulting `seeked` is not
+  // mistaken for a user drag (which would re-lock the single/multi loop target).
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    const ab = abLoop
+    if (ab && ab.enabled && ab.bTime > ab.aTime && video.currentTime > ab.bTime) {
+      seekingForAbRef.current = true
+      video.currentTime = ab.aTime
+      void video.play().catch(() => undefined)
+    }
+  }, [abLoop, videoRef])
 
   // Reset the loop repetition counter whenever the limit changes (slider
   // drag / toggle) so a new count always starts counting from zero.
