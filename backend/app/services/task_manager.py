@@ -93,9 +93,21 @@ class TaskManager:
         return True
 
     def recompute(
-        self, task_id: str, mode: str, first_beat_time: Optional[float] = None
+        self,
+        task_id: str,
+        mode: str,
+        first_beat_time: Optional[float] = None,
+        bpm: Optional[float] = None,
     ) -> Optional[AnalysisTask]:
-        """Re-derive segments using one of the three fallback strategies."""
+        """Re-derive segments using one of the fallback strategies.
+
+        Modes:
+          - ``fixed120``: hard-coded 120 BPM grid (legacy fallback).
+          - ``fixedBpm``: user-typed BPM (40-300). Builds a regular grid at that
+            exact tempo and treats it as fully confident.
+          - ``manual_first_beat``: re-grid anchored on a user-supplied first beat.
+          - ``auto``: re-run beat detection on the stored audio.
+        """
         task = self._tasks.get(task_id)
         if task is None:
             return None
@@ -103,6 +115,15 @@ class TaskManager:
         if mode == "fixed120":
             beats = segmenter.generate_fixed_beats(task.duration, 120.0)
             task.bpm = 120.0
+            task.confidence = 1.0
+        elif mode == "fixedBpm":
+            # The router already returns 422 for an out-of-range value; this is a
+            # defensive second check so the service can never build a degenerate
+            # (or None) grid if called directly.
+            if bpm is None or bpm < 40 or bpm > 300:
+                raise ValueError("BPM 需在 40–300 之间")
+            beats = segmenter.generate_fixed_beats(task.duration, float(bpm))
+            task.bpm = float(bpm)
             task.confidence = 1.0
         elif mode == "manual_first_beat":
             if first_beat_time is None:

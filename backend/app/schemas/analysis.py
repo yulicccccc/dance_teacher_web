@@ -5,7 +5,7 @@ Field names intentionally mirror the shared contract in `docs/system_design.md`
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -51,8 +51,11 @@ class UploadResponse(BaseModel):
 class RecomputeRequest(BaseModel):
     """Body for the beat re-computation fallback."""
 
-    mode: str  # auto | fixed120 | manual_first_beat
+    # `fixedBpm` lets the user override the detected tempo with a value they
+    # typed in; `bpm` is required (and range-checked 40-300) only for that mode.
+    mode: Literal['auto', 'fixed120', 'fixedBpm', 'manual_first_beat']
     firstBeatTime: Optional[float] = None  # required when mode == manual_first_beat
+    bpm: Optional[float] = None  # required when mode == fixedBpm
 
 
 class ErrorResponse(BaseModel):

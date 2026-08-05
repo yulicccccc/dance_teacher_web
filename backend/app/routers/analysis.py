@@ -1,7 +1,7 @@
 """Analysis task status / result / retry / recompute endpoints."""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from ..core.errors import AppError
 from ..schemas.analysis import AnalysisResult, RecomputeRequest, UploadResponse
@@ -41,8 +41,14 @@ def retry(taskId: str) -> UploadResponse:
 
 @router.post("/analysis/{taskId}/recompute", response_model=AnalysisResult)
 def recompute(taskId: str, body: RecomputeRequest) -> AnalysisResult:
+    # Range guard for the manual-BPM mode. Done at the router layer (not only
+    # inside the service) so an out-of-range value returns a clean 422 instead
+    # of being swallowed into a 500 by the generic error handler.
+    if body.mode == "fixedBpm":
+        if body.bpm is None or body.bpm < 40 or body.bpm > 300:
+            raise HTTPException(status_code=422, detail="BPM 需在 40–300 之间")
     try:
-        task = task_manager.recompute(taskId, body.mode, body.firstBeatTime)
+        task = task_manager.recompute(taskId, body.mode, body.firstBeatTime, body.bpm)
     except ValueError as exc:
         raise AppError(code="INVALID_REQUEST", message=str(exc), status_code=400)
     if task is None:
