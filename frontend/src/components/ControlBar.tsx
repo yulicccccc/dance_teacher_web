@@ -20,6 +20,7 @@ import VideocamIcon from '@mui/icons-material/Videocam'
 import VideocamOffIcon from '@mui/icons-material/VideocamOff'
 import { useLessonStore } from '../store/lessonStore'
 import { findBeatAt } from '../utils/segmentMath'
+import LoopPanel from './LoopPanel'
 import type { Segment, ABLoop } from '../types/api'
 
 interface Props {
@@ -177,6 +178,10 @@ export default function ControlBar({
             单节循环
           </Button>
         </Tooltip>
+        {/* 多选段落循环配置：single/multi 切换 + 段落勾选清单（空选退化为单节）。
+            始终挂载；loopMode 仅决定 useBeatSync 的循环方式，真正循环与否仍由
+            上方「单节循环」主开关（loopSegment）控制。 */}
+        <LoopPanel segments={segments} />
         <Tooltip title="镜像翻转（默认开，模拟镜面）">
           <Button
             variant={mirror ? 'contained' : 'outlined'}

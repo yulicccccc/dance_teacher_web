@@ -12,6 +12,8 @@ interface Props {
   pulse: boolean
   /** Double-click gesture: seek to the adjacent beat and pause (1 = next, -1 = previous). */
   stepBeat?: (dir: 1 | -1) => void
+  /** Beat dot click-through from the overlay (0-based dot index). */
+  onDotClick?: (segmentIndex: number) => void
 }
 
 /**
@@ -24,7 +26,7 @@ interface Props {
  * the beat overlay scale together with the video; `requestFullscreen` only
  * enlarges the container and leaves the inner layout untouched.
  */
-export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse, stepBeat }: Props) {
+export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse, stepBeat, onDotClick }: Props) {
   const mirrorSx: SxProps<Theme> = mirror
     ? { transform: 'scaleX(-1)' }
     : { transform: 'none' }
@@ -59,19 +61,34 @@ export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse, s
     <Box
       ref={containerRef}
       className="relative w-full aspect-video bg-black rounded-xl overflow-hidden"
-      // Double-click anywhere on the play area: jump to the NEXT beat and
-      // freeze there; Shift+double-click jumps to the PREVIOUS beat. Play/pause
-      // is driven by the external ControlBar (no single-click gesture on the
-      // video itself), so the double-click gesture cannot conflict with it.
+      // Double-click gesture: jump to the adjacent beat and freeze there. We
+      // split the play area into LEFT / RIGHT halves by the container rect:
+      //   * right half -> NEXT beat (stepBeat(+1))
+      //   * left  half -> PREVIOUS beat (stepBeat(-1))
+      // In mirror view the on-screen left/right is flipped, so the mapping is
+      // inverted to match what the user sees. Play/pause is driven by the
+      // external ControlBar (no single-click gesture here), so the double-click
+      // gesture cannot conflict with it.
       onDoubleClick={(e) => {
         e.preventDefault()
-        stepBeat?.(e.shiftKey ? -1 : 1)
+        const el = containerRef.current
+        if (!el || !stepBeat) return
+        const rect = el.getBoundingClientRect()
+        const onRightHalf = e.clientX - rect.left > rect.width / 2
+        const dir: 1 | -1 = onRightHalf
+          ? mirror
+            ? -1
+            : 1
+          : mirror
+            ? 1
+            : -1
+        stepBeat(dir)
       }}
     >
       <Box className="w-full h-full" sx={mirrorSx}>
         <video ref={videoRef} src={src} className="w-full h-full object-contain" playsInline />
       </Box>
-      <BeatOverlay beatIndex={beatIndex} pulse={pulse} />
+      <BeatOverlay beatIndex={beatIndex} pulse={pulse} mirror={mirror} onDotClick={onDotClick} />
       <IconButton
         onClick={toggleFullscreen}
         // Swallow double-clicks so rapidly toggling fullscreen does not bubble

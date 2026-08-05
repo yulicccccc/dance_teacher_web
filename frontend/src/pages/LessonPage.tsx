@@ -58,6 +58,8 @@ export default function LessonPage() {
   const voiceEnabled = useLessonStore((s) => s.voiceEnabled)
   const beatOffset = useLessonStore((s) => s.beatOffset)
   const loopCount = useLessonStore((s) => s.loopCount)
+  const loopMode = useLessonStore((s) => s.loopMode)
+  const loopSegmentIds = useLessonStore((s) => s.loopSegmentIds)
   const abLoop = useLessonStore((s) => s.abLoop)
   const setABLoop = useLessonStore((s) => s.setABLoop)
   const learnedSegments = useLessonStore((s) => s.learnedSegments)
@@ -93,6 +95,11 @@ export default function LessonPage() {
     (i) => setSegment(i),
     abLoop,
     loopCount,
+    loopMode,
+    loopSegmentIds,
+    // Compare-mode hides the player (display:none) but the SAME <video> keeps
+    // playing side-by-side — tell the engine to stop driving loop/AB seeks.
+    !compareOpen,
   )
 
   // Fetch result + hydrate progress from local storage.
@@ -406,6 +413,7 @@ export default function LessonPage() {
                 beatIndex={beatIndex}
                 pulse={pulse}
                 stepBeat={stepBeat}
+                onDotClick={goToSegment}
               />
             </Box>
             {compareOpen && (
