@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { createRef, type RefObject } from 'react'
+import { createRef, type MutableRefObject, type RefObject } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import { useBeatSync } from '../src/hooks/useBeatSync'
@@ -79,6 +79,7 @@ interface Props {
   loopMode: 'single' | 'multi'
   loopSegmentIds: number[]
   active?: boolean
+  forceLoopTargetRef?: MutableRefObject<number | null>
 }
 function Harness(props: Props) {
   useBeatSync(
@@ -93,6 +94,7 @@ function Harness(props: Props) {
     props.loopMode,
     props.loopSegmentIds,
     props.active ?? true,
+    props.forceLoopTargetRef,
   )
   return null
 }
@@ -133,6 +135,62 @@ function drive(
 }
 
 describe('useBeatSync — multi-segment loop (Part 2)', () => {
+  it('consumes a clicked single-loop target before the old target can clamp it back', () => {
+    const forceLoopTargetRef = { current: null } as MutableRefObject<number | null>
+    const { video, timeLog, root, container } = setup({
+      segments: makeSegments(),
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+      loopMode: 'single',
+      loopSegmentIds: [],
+      forceLoopTargetRef,
+    })
+    act(() => {
+      video.currentTime = 1
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+
+    forceLoopTargetRef.current = 3
+    act(() => {
+      video.currentTime = 8
+    })
+    timeLog.length = 0
+    step()
+    expect(forceLoopTargetRef.current).toBeNull()
+    expect(timeLog.some((time) => Math.abs(time) < 1e-3)).toBe(false)
+
+    const loopBacks: number[] = []
+    drive(video, timeLog, 8, 1000, 0.01, (time) => loopBacks.push(time))
+    expect(loopBacks.some((time) => Math.abs(time - 7.5) < 1e-3)).toBe(true)
+    root.unmount()
+    container.remove()
+  })
+
+  it('merges contiguous selected segments into one padded loop block', () => {
+    const { video, timeLog, root, container } = setup({
+      segments: makeSegments(),
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+      loopMode: 'multi',
+      loopSegmentIds: [2, 3],
+    })
+    act(() => {
+      video.currentTime = 5
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+    const loopBacks: number[] = []
+    drive(video, timeLog, 5, 2000, 0.01, (time) => loopBacks.push(time))
+    expect(loopBacks.some((time) => Math.abs(time - 3.5) < 1e-3)).toBe(true)
+    // It must not loop at the internal seam between segment 2 and segment 3.
+    expect(loopBacks.some((time) => Math.abs(time - 7.5) < 1e-3)).toBe(false)
+    root.unmount()
+    container.remove()
+  })
+
   it('cycles through the selected segments, wrapping last back to first', () => {
     // Select [1, 3]. Starting inside seg1, crossing seg1's padded loopEnd (4.5)
     // should seek to seg3's padded start (7.5); crossing seg3's padded loopEnd

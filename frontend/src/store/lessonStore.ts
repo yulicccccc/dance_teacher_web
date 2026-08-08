@@ -1,111 +1,154 @@
 import { create } from 'zustand'
 import type { ABLoop } from '../types/api'
 
-/**
- * Runtime state for the lesson player. Persisted to localStorage/IndexedDB by
- * `useLocalProgress` (T05). Mirror defaults to `true` to simulate the dance-studio
- * mirror view for single-camera footage.
- */
-/**
- * Loop behaviour: `single` loops the segment the playhead is in (padded by one
- * beat each side); `multi` loops only the subset of segments the user ticked
- * in the LoopPanel, each also padded, cycling through them and wrapping the
- * last back to the first.
- */
-export type LoopMode = 'single' | 'multi'
+/** The three mutually exclusive loop modes from the loop-redesign PRD. */
+export type LoopMode = 'single' | 'multi' | 'ab'
+
+function validAB(abLoop: ABLoop | null): boolean {
+  return abLoop != null && abLoop.aTime < abLoop.bTime
+}
 
 export interface LessonState {
   currentSegment: number
   playbackRate: number
+  /** Video image mirror. */
   mirror: boolean
-  loopSegment: boolean
+  /** Beat-overlay mirror, intentionally independent from the video image. */
+  beatMirror: boolean
+  /** One master switch shared by single, multi and AB modes. */
+  loopEnabled: boolean
+  loopMode: LoopMode
+  loopSegmentIds: number[]
   abLoop: ABLoop | null
   voiceEnabled: boolean
-  beatOffset: number // manual beat-grid offset in BEATS (display only), default 0
-  loopCount: number | null // loop repetition limit; null = infinite
+  /** Confirmed beat-grid offset used by the player and segmentation. */
+  beatOffset: number
+  /** Slider draft; does not alter segmentation until explicitly confirmed. */
+  draftBeatOffset: number
+  loopCount: number | null
+  practiceSeconds: number
   learnedSegments: number[]
-  /** Which loop flavour is active when looping is on. */
-  loopMode: LoopMode
-  /** Segment indices (1-based, matching `Segment.index`) ticked for multi-loop. */
-  loopSegmentIds: number[]
   setSegment: (i: number) => void
   setPlaybackRate: (r: number) => void
   setMirror: (b: boolean) => void
-  setLoopSegment: (b: boolean) => void
-  setABLoop: (v: ABLoop | null) => void
-  setVoiceEnabled: (b: boolean) => void
-  setBeatOffset: (n: number) => void
-  setLoopCount: (n: number | null) => void
-  toggleLearned: (i: number) => void
-  setLearnedSegments: (arr: number[]) => void
+  setBeatMirror: (b: boolean) => void
+  setLoopEnabled: (b: boolean) => void
+  toggleLoopEnabled: () => void
   setLoopMode: (m: LoopMode) => void
   toggleLoopSegmentId: (id: number) => void
   setLoopSegmentIds: (ids: number[]) => void
+  setABLoop: (v: ABLoop | null) => void
+  setVoiceEnabled: (b: boolean) => void
+  setBeatOffset: (n: number) => void
+  setDraftBeatOffset: (n: number) => void
+  setLoopCount: (n: number | null) => void
+  addPracticeSeconds: (seconds: number) => void
+  toggleLearned: (i: number) => void
+  setLearnedSegments: (arr: number[]) => void
   reset: () => void
+}
+
+function canEnableLoop(state: Pick<LessonState, 'loopMode' | 'loopSegmentIds' | 'abLoop'>) {
+  if (state.loopMode === 'multi') return state.loopSegmentIds.length > 0
+  if (state.loopMode === 'ab') return validAB(state.abLoop)
+  return true
 }
 
 export const useLessonStore = create<LessonState>((set) => ({
   currentSegment: 1,
   playbackRate: 1,
   mirror: true,
-  loopSegment: false,
+  beatMirror: true,
+  loopEnabled: false,
+  loopMode: 'single',
+  loopSegmentIds: [],
   abLoop: null,
   voiceEnabled: false,
   beatOffset: 0,
+  draftBeatOffset: 0,
   loopCount: null,
+  practiceSeconds: 0,
   learnedSegments: [],
-  loopMode: 'single',
-  loopSegmentIds: [],
 
   setSegment: (i) => set({ currentSegment: i }),
   setPlaybackRate: (r) => set({ playbackRate: r }),
   setMirror: (b) => set({ mirror: b }),
-  // Enabling the single-segment loop clears any custom A→B loop: the two loop
-  // modes are mutually exclusive (AB is beat-anchored, single-seg is phrase-
-  // anchored) and running both would fight over the playhead.
-  setLoopSegment: (b) =>
-    set(b ? { loopSegment: true, abLoop: null } : { loopSegment: false }),
-  // Enabling the A→B loop turns the single-segment loop off (mutual
-  // exclusivity). Disabling or clearing AB leaves the single-segment loop as-is.
-  setABLoop: (v) =>
-    set(v && v.enabled ? { abLoop: v, loopSegment: false } : { abLoop: v }),
+  setBeatMirror: (b) => set({ beatMirror: b }),
+  setLoopEnabled: (b) =>
+    set((state) => ({ loopEnabled: b && canEnableLoop(state) })),
+  toggleLoopEnabled: () =>
+    set((state) => ({
+      loopEnabled: canEnableLoop(state) ? !state.loopEnabled : false,
+    })),
+  setLoopMode: (loopMode) =>
+    set((state) => {
+      const next = { ...state, loopMode }
+      return {
+        loopMode,
+        loopEnabled: state.loopEnabled && canEnableLoop(next),
+      }
+    }),
+  toggleLoopSegmentId: (id) =>
+    set((state) => {
+      const loopSegmentIds = state.loopSegmentIds.includes(id)
+        ? state.loopSegmentIds.filter((x) => x !== id)
+        : [...state.loopSegmentIds, id].sort((a, b) => a - b)
+      return {
+        loopSegmentIds,
+        loopEnabled:
+          state.loopMode === 'multi' && loopSegmentIds.length === 0
+            ? false
+            : state.loopEnabled,
+      }
+    }),
+  setLoopSegmentIds: (ids) =>
+    set((state) => {
+      const loopSegmentIds = Array.from(new Set(ids)).sort((a, b) => a - b)
+      return {
+        loopSegmentIds,
+        loopEnabled:
+          state.loopMode === 'multi' && loopSegmentIds.length === 0
+            ? false
+            : state.loopEnabled,
+      }
+    }),
+  setABLoop: (abLoop) =>
+    set((state) => ({
+      abLoop,
+      loopEnabled:
+        state.loopMode === 'ab' && !validAB(abLoop) ? false : state.loopEnabled,
+    })),
   setVoiceEnabled: (b) => set({ voiceEnabled: b }),
   setBeatOffset: (n) => set({ beatOffset: n }),
+  setDraftBeatOffset: (n) => set({ draftBeatOffset: n }),
   setLoopCount: (n) => set({ loopCount: n }),
-  toggleLearned: (i) =>
-    set((s) => ({
-      learnedSegments: s.learnedSegments.includes(i)
-        ? s.learnedSegments.filter((x) => x !== i)
-        : [...s.learnedSegments, i].sort((a, b) => a - b),
+  addPracticeSeconds: (seconds) =>
+    set((state) => ({
+      practiceSeconds: state.practiceSeconds + Math.max(0, seconds),
     })),
+  toggleLearned: (i) =>
+    set((state) => ({
+      learnedSegments: state.learnedSegments.includes(i)
+        ? state.learnedSegments.filter((x) => x !== i)
+        : [...state.learnedSegments, i].sort((a, b) => a - b),
+    })),
+  setLearnedSegments: (arr) =>
+    set({ learnedSegments: Array.from(new Set(arr)).sort((a, b) => a - b) }),
   reset: () =>
     set({
       currentSegment: 1,
       playbackRate: 1,
       mirror: true,
-      loopSegment: false,
+      beatMirror: true,
+      loopEnabled: false,
+      loopMode: 'single',
+      loopSegmentIds: [],
       abLoop: null,
       voiceEnabled: false,
       beatOffset: 0,
+      draftBeatOffset: 0,
       loopCount: null,
+      practiceSeconds: 0,
       learnedSegments: [],
-      loopMode: 'single',
-      loopSegmentIds: [],
     }),
-  setLearnedSegments: (arr) =>
-    set({ learnedSegments: Array.from(new Set(arr)).sort((a, b) => a - b) }),
-  // Switch the loop flavour. Does not toggle looping itself — the master
-  // `loopSegment` switch (ControlBar "单节循环") keeps governing whether any
-  // loop runs; `multi` + an empty selection simply degrades to single behaviour.
-  setLoopMode: (m) => set({ loopMode: m }),
-  // Tick / un-tick a single segment for the multi-segment loop.
-  toggleLoopSegmentId: (id) =>
-    set((s) => ({
-      loopSegmentIds: s.loopSegmentIds.includes(id)
-        ? s.loopSegmentIds.filter((x) => x !== id)
-        : [...s.loopSegmentIds, id].sort((a, b) => a - b),
-    })),
-  // Replace the whole multi-segment selection (used by "select all / clear").
-  setLoopSegmentIds: (ids) =>
-    set({ loopSegmentIds: Array.from(new Set(ids)).sort((a, b) => a - b) }),
 }))

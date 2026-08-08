@@ -52,6 +52,7 @@ describe('UploadPage — server warm-up indicator', () => {
       await Promise.resolve()
     })
     expect(container.textContent).not.toContain('正在唤醒服务器…')
+    expect(container.textContent).toContain('试用示例（无需上传）')
 
     root.unmount()
     container.remove()

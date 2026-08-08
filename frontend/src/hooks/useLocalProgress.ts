@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AnalysisResult, ABLoop } from '../types/api'
+import type { LoopMode } from '../store/lessonStore'
 
 /**
  * Local-first progress store (PRD P0-9). Mirrors the schema in
@@ -19,7 +20,12 @@ export interface LessonProgress {
   currentSegment: number
   playbackRate: number
   mirror: boolean
-  loopSegment: boolean
+  beatMirror: boolean
+  loopEnabled: boolean
+  loopMode: LoopMode
+  loopSegmentIds: number[]
+  loopCount: number | null
+  practiceSeconds: number
   voiceEnabled: boolean
   beatOffset: number
   learnedSegments: number[]
@@ -27,6 +33,11 @@ export interface LessonProgress {
    *  still hydrate; treated as `null` when missing. */
   abLoop?: ABLoop | null
   updatedAt: string
+}
+
+/** Legacy v1 shape kept only for migration of already-saved browser data. */
+type LegacyLessonProgress = Partial<LessonProgress> & {
+  loopSegment?: boolean
 }
 
 export interface CourseProgress {
@@ -46,6 +57,41 @@ export interface ProgressStore {
 /** De-duplicate and sort learned-segment ids ascending. */
 export function sortSegments(arr: number[]): number[] {
   return Array.from(new Set(arr)).sort((a, b) => a - b)
+}
+
+/** Upgrade old progress blobs to the loop-redesign schema without data loss. */
+export function normalizeLessonProgress(raw: LegacyLessonProgress): LessonProgress {
+  const abLoop = raw.abLoop ?? null
+  const loopMode: LoopMode =
+    raw.loopMode === 'single' || raw.loopMode === 'multi' || raw.loopMode === 'ab'
+      ? raw.loopMode
+      : abLoop?.enabled
+        ? 'ab'
+        : 'single'
+  const loopSegmentIds = sortSegments(raw.loopSegmentIds ?? [])
+  const requestedEnabled =
+    raw.loopEnabled ?? raw.loopSegment ?? Boolean(abLoop?.enabled)
+  const validForMode =
+    loopMode === 'single' ||
+    (loopMode === 'multi' && loopSegmentIds.length > 0) ||
+    (loopMode === 'ab' && abLoop != null && abLoop.aTime < abLoop.bTime)
+
+  return {
+    currentSegment: raw.currentSegment ?? 1,
+    playbackRate: raw.playbackRate ?? 1,
+    mirror: raw.mirror ?? true,
+    beatMirror: raw.beatMirror ?? raw.mirror ?? true,
+    loopEnabled: requestedEnabled && validForMode,
+    loopMode,
+    loopSegmentIds,
+    loopCount: raw.loopCount ?? null,
+    practiceSeconds: raw.practiceSeconds ?? 0,
+    voiceEnabled: raw.voiceEnabled ?? false,
+    beatOffset: raw.beatOffset ?? 0,
+    learnedSegments: sortSegments(raw.learnedSegments ?? []),
+    abLoop,
+    updatedAt: raw.updatedAt ?? new Date(0).toISOString(),
+  }
 }
 
 // ---- IndexedDB helpers (fallback for large results) ---------------------
@@ -99,6 +145,9 @@ export async function loadStore(): Promise<ProgressStore> {
     const store = JSON.parse(raw) as ProgressStore
     store.courses = store.courses || {}
     for (const course of Object.values(store.courses)) {
+      course.progress = normalizeLessonProgress(
+        course.progress as unknown as LegacyLessonProgress,
+      )
       if (course.result == null && course._resultKey) {
         const res = await idbGet(course._resultKey)
         if (res) course.result = res as AnalysisResult

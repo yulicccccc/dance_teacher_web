@@ -4,6 +4,12 @@
 > 配套文件：`docs/class-diagram.mermaid`（类图）、`docs/sequence-diagram.mermaid`（时序图）
 > 依据：PRD v0.1（产品经理：许清楚）
 
+> **2026-08-08 实施补记**：生产环境采用单容器同源部署——Vite 构建产物由
+> FastAPI 托管，librosa/ffmpeg 在服务端执行节拍分析，当前免费环境为 Render。
+> 曾尝试的“纯浏览器节拍检测”在真实 iPhone MOV 上出现 `Decoding failed`，且
+> BPM 与本地 librosa 结果明显不一致，因此只保留其产品交互要求，不再采用其
+> 零后端技术假设。大文件通过 4MB 分块、幂等上传与自动重试处理。
+
 ---
 
 ## 第一部分：系统设计
@@ -246,8 +252,15 @@ class TaskStatus(BaseModel):
         "currentSegment": 1,
         "playbackRate": 1,
         "mirror": true,
-        "loopSegment": false,
+        "beatMirror": true,
+        "loopEnabled": false,
+        "loopMode": "single",
+        "loopSegmentIds": [],
+        "abLoop": null,
+        "loopCount": null,
+        "practiceSeconds": 0,
         "voiceEnabled": false,
+        "beatOffset": 0,
         "learnedSegments": [1, 2],
         "updatedAt": "2026-07-24T22:20:00Z"
       }
@@ -259,6 +272,9 @@ class TaskStatus(BaseModel):
 - `videoId`：本地文件用 `content hash(file)`，链接用 `hash(url)`，保证同一视频复用进度。
 - `result` 一般 < 50KB，存 localStorage 安全；若超阈值由 `useLocalProgress` 自动降级到 IndexedDB（调用方无感）。
 - **断点续学**：进入 `LessonPage` 先读 `progress.currentSegment` 自动跳转；标记「已学会」写回 `learnedSegments`。
+- **旧存档迁移**：`loopSegment: true` 自动迁移为
+  `loopEnabled: true, loopMode: "single"`；旧 `abLoop.enabled: true`
+  自动迁移为 `loopEnabled: true, loopMode: "ab"`。
 
 ### 4. 程序调用流程（时序图）
 

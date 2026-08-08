@@ -27,6 +27,7 @@ import BeatInfoCard from '../components/BeatInfoCard'
 import { resegmentSegments, findBeatAt } from '../utils/segmentMath'
 import { resolveCompareSegment } from '../utils/compare'
 import { pickChineseVoice } from '../utils/voice'
+import { buildDemoResult, DEMO_VIDEO_URL } from '../demo/sampleLesson'
 import type { AnalysisResult, RecomputeMode } from '../types/api'
 
 const CHINESE_NUM = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
@@ -37,6 +38,12 @@ export default function LessonPage() {
   const navigate = useNavigate()
   const videoId: string =
     (location.state as { videoId?: string } | null)?.videoId ?? taskId ?? ''
+  const demoResult = useMemo(
+    () =>
+      (location.state as { demoResult?: AnalysisResult } | null)?.demoResult ??
+      (taskId === 'demo' ? buildDemoResult() : null),
+    [location.state, taskId],
+  )
 
   const { videoRef, play, togglePlay, seek, setRate } = useVideoControls()
   const { ready, getCourse, saveCourse, updateProgress, markLearned } = useLocalProgress()
@@ -50,21 +57,31 @@ export default function LessonPage() {
   const [snack, setSnack] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
   const [compareOpen, setCompareOpen] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
 
   const currentSegment = useLessonStore((s) => s.currentSegment)
   const playbackRate = useLessonStore((s) => s.playbackRate)
   const mirror = useLessonStore((s) => s.mirror)
-  const loopSegment = useLessonStore((s) => s.loopSegment)
+  const beatMirror = useLessonStore((s) => s.beatMirror)
+  const loopEnabled = useLessonStore((s) => s.loopEnabled)
   const voiceEnabled = useLessonStore((s) => s.voiceEnabled)
   const beatOffset = useLessonStore((s) => s.beatOffset)
+  const draftBeatOffset = useLessonStore((s) => s.draftBeatOffset)
   const loopCount = useLessonStore((s) => s.loopCount)
+  const practiceSeconds = useLessonStore((s) => s.practiceSeconds)
   const loopMode = useLessonStore((s) => s.loopMode)
   const loopSegmentIds = useLessonStore((s) => s.loopSegmentIds)
   const abLoop = useLessonStore((s) => s.abLoop)
   const setABLoop = useLessonStore((s) => s.setABLoop)
   const learnedSegments = useLessonStore((s) => s.learnedSegments)
   const setSegment = useLessonStore((s) => s.setSegment)
+  const setLoopEnabled = useLessonStore((s) => s.setLoopEnabled)
+  const toggleLoopSegmentId = useLessonStore((s) => s.toggleLoopSegmentId)
+  const setLoopSegmentIds = useLessonStore((s) => s.setLoopSegmentIds)
+  const addPracticeSeconds = useLessonStore((s) => s.addPracticeSeconds)
   const setLearnedSegments = useLessonStore((s) => s.setLearnedSegments)
+  const forceLoopTargetRef = useRef<number | null>(null)
 
   const segments = result?.segments ?? []
 
@@ -86,20 +103,27 @@ export default function LessonPage() {
       ? segments.reduce((a, s) => a + (s.endTime - s.startTime), 0) /
         segments.reduce((a, s) => a + s.beats.length, 0)
       : 0
+  const abLoopForEngine =
+    loopEnabled && loopMode === 'ab' && abLoop && abLoop.aTime < abLoop.bTime
+      ? { ...abLoop, enabled: true }
+      : abLoop
+        ? { ...abLoop, enabled: false }
+        : null
   const { beatIndex, pulse, stepBeat } = useBeatSync(
     videoRef,
     offsetSegments,
-    loopSegment,
-    0,
+    loopEnabled && loopMode !== 'ab',
+    draftBeatOffset - beatOffset,
     beatDuration,
     (i) => setSegment(i),
-    abLoop,
+    abLoopForEngine,
     loopCount,
-    loopMode,
-    loopSegmentIds,
+    loopMode === 'multi' ? 'multi' : 'single',
+    loopMode === 'multi' ? loopSegmentIds : [],
     // Compare-mode hides the player (display:none) but the SAME <video> keeps
     // playing side-by-side — tell the engine to stop driving loop/AB seeks.
     !compareOpen,
+    forceLoopTargetRef,
   )
 
   // Fetch result + hydrate progress from local storage.
@@ -108,7 +132,7 @@ export default function LessonPage() {
     let cancelled = false
     void (async () => {
       try {
-        const res = await apiClient.getResult(taskId)
+        const res = demoResult ?? (await apiClient.getResult(taskId))
         if (cancelled) return
         setResult(res)
         if (ready) {
@@ -119,13 +143,22 @@ export default function LessonPage() {
               currentSegment: p.currentSegment,
               playbackRate: p.playbackRate,
               mirror: p.mirror,
-              loopSegment: p.loopSegment,
+              beatMirror: p.beatMirror,
+              loopEnabled: p.loopEnabled,
+              loopMode: p.loopMode,
+              loopSegmentIds: p.loopSegmentIds,
+              loopCount: p.loopCount,
+              practiceSeconds: p.practiceSeconds,
               voiceEnabled: p.voiceEnabled,
               beatOffset: p.beatOffset ?? 0,
+              draftBeatOffset: p.beatOffset ?? 0,
               learnedSegments: p.learnedSegments,
               abLoop: p.abLoop ?? null,
             })
           } else {
+            // A new course must not inherit the previous course's loop,
+            // learned or practice-time state from the global Zustand store.
+            useLessonStore.getState().reset()
             await saveCourse(videoId, {
               videoName: res.videoName,
               taskId: res.taskId,
@@ -134,7 +167,12 @@ export default function LessonPage() {
                 currentSegment: 1,
                 playbackRate: 1,
                 mirror: true,
-                loopSegment: false,
+                beatMirror: true,
+                loopEnabled: false,
+                loopMode: 'single',
+                loopSegmentIds: [],
+                loopCount: null,
+                practiceSeconds: 0,
                 voiceEnabled: false,
                 beatOffset: 0,
                 learnedSegments: [],
@@ -154,7 +192,7 @@ export default function LessonPage() {
     return () => {
       cancelled = true
     }
-  }, [taskId, videoId, ready, getCourse, saveCourse])
+  }, [taskId, videoId, ready, getCourse, saveCourse, demoResult])
 
   // Track real play/pause state for the control-bar icon. `usePlayPauseSync`
   // re-attaches its `play`/`pause` listeners when `segments` flips from `[]`
@@ -162,6 +200,35 @@ export default function LessonPage() {
   // the icon starts tracking the moment the element exists. See the hook for
   // the detailed Bug-C explanation.
   usePlayPauseSync(videoRef, segments, setPlaying)
+
+  // Count active lesson time in small durable batches. A short final partial
+  // batch may be lost on a hard tab kill, but normal pause/navigation persists.
+  useEffect(() => {
+    if (!playing) return
+    const timer = window.setInterval(() => addPracticeSeconds(5), 5000)
+    return () => window.clearInterval(timer)
+  }, [playing, addPracticeSeconds])
+
+  // Native media timeline used by the PRD's draggable progress control.
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    const syncTime = () => setCurrentTime(video.currentTime)
+    const syncDuration = () =>
+      setDuration(Number.isFinite(video.duration) ? video.duration : 0)
+    syncTime()
+    syncDuration()
+    video.addEventListener('timeupdate', syncTime)
+    video.addEventListener('seeked', syncTime)
+    video.addEventListener('loadedmetadata', syncDuration)
+    video.addEventListener('durationchange', syncDuration)
+    return () => {
+      video.removeEventListener('timeupdate', syncTime)
+      video.removeEventListener('seeked', syncTime)
+      video.removeEventListener('loadedmetadata', syncDuration)
+      video.removeEventListener('durationchange', syncDuration)
+    }
+  }, [result, videoRef])
 
   // Apply playback rate to the element whenever it changes.
   useEffect(() => {
@@ -192,7 +259,12 @@ export default function LessonPage() {
       currentSegment,
       playbackRate,
       mirror,
-      loopSegment,
+      beatMirror,
+      loopEnabled,
+      loopMode,
+      loopSegmentIds,
+      loopCount,
+      practiceSeconds,
       voiceEnabled,
       beatOffset,
       learnedSegments,
@@ -205,7 +277,12 @@ export default function LessonPage() {
     currentSegment,
     playbackRate,
     mirror,
-    loopSegment,
+    beatMirror,
+    loopEnabled,
+    loopMode,
+    loopSegmentIds,
+    loopCount,
+    practiceSeconds,
     voiceEnabled,
     beatOffset,
     learnedSegments,
@@ -248,6 +325,13 @@ export default function LessonPage() {
   const goToSegment = (index: number) => {
     const seg = offsetSegments.find((s) => s.index === index)
     if (!seg) return
+    if (loopMode === 'single') {
+      // PRD: clicking a segment means "loop this segment" immediately. The
+      // imperative target prevents the next animation frame from restoring the
+      // previous segment before the media seeked event arrives.
+      forceLoopTargetRef.current = index
+      setLoopEnabled(true)
+    }
     setSegment(index)
     setRate(playbackRate)
     seek(seg.startTime)
@@ -274,7 +358,7 @@ export default function LessonPage() {
     const prev = useLessonStore.getState().abLoop
     if (which === 'a') {
       setABLoop({
-        enabled: prev?.enabled ?? false,
+        enabled: false,
         aTime: hit.beatTime,
         bTime: prev?.bTime ?? hit.beatTime,
         aBeat: hit.globalBeat,
@@ -282,24 +366,13 @@ export default function LessonPage() {
       })
     } else {
       setABLoop({
-        enabled: prev?.enabled ?? false,
+        enabled: false,
         aTime: prev?.aTime ?? hit.beatTime,
         bTime: hit.beatTime,
         aBeat: prev?.aBeat ?? hit.globalBeat,
         bBeat: hit.globalBeat,
       })
     }
-  }
-  const handleEnableAB = () => {
-    const cur = useLessonStore.getState().abLoop
-    if (!cur || cur.aTime >= cur.bTime) return
-    // Store auto-clears loopSegment (mutual exclusivity) when AB is enabled.
-    setABLoop({ ...cur, enabled: true })
-  }
-  const handleDisableAB = () => {
-    const cur = useLessonStore.getState().abLoop
-    if (!cur) return
-    setABLoop({ ...cur, enabled: false })
   }
   const handleClearAB = () => setABLoop(null)
 
@@ -318,7 +391,12 @@ export default function LessonPage() {
     try {
       const req: { mode: RecomputeMode; firstBeatTime?: number } = { mode }
       if (mode === 'manual_first_beat') req.firstBeatTime = parseFloat(firstBeat)
-      const res = await apiClient.recompute(taskId, req)
+      const res = demoResult
+        ? buildDemoResult(
+            mode === 'fixed120' ? 120 : result?.bpm ?? 100,
+            mode === 'manual_first_beat' ? req.firstBeatTime ?? 0 : 0,
+          )
+        : await apiClient.recompute(taskId, req)
       setResult(res)
       setLowConfOpen(false)
       setSnack('已重新生成分段')
@@ -335,7 +413,9 @@ export default function LessonPage() {
     if (!taskId) return
     setRecomputing(true)
     try {
-      const res = await apiClient.recompute(taskId, { mode: 'fixedBpm', bpm })
+      const res = demoResult
+        ? buildDemoResult(bpm)
+        : await apiClient.recompute(taskId, { mode: 'fixedBpm', bpm })
       setResult(res)
       setSnack(`已用 BPM ${bpm} 重新生成分段`)
     } catch (e) {
@@ -365,7 +445,7 @@ export default function LessonPage() {
   if (!result) return null
 
   const total = offsetSegments.length
-  const videoSrc = `${apiClient.BASE}/video/${taskId}`
+  const videoSrc = demoResult ? DEMO_VIDEO_URL : `${apiClient.BASE}/video/${taskId}`
 
   return (
     <Box sx={{ minHeight: '100vh', pb: 6 }}>
@@ -394,6 +474,13 @@ export default function LessonPage() {
               currentSegment={currentSegment}
               learnedSegments={learnedSegments}
               onSelect={goToSegment}
+              multiSelect={loopMode === 'multi'}
+              selectedLoopIds={loopSegmentIds}
+              onToggleLoopId={toggleLoopSegmentId}
+              onSelectAll={() =>
+                setLoopSegmentIds(offsetSegments.map((segment) => segment.index))
+              }
+              onClearSelection={() => setLoopSegmentIds([])}
             />
           </Box>
           <Box sx={{ flexGrow: 1 }}>
@@ -409,6 +496,7 @@ export default function LessonPage() {
               <VideoPlayer
                 src={videoSrc}
                 mirror={mirror}
+                beatMirror={beatMirror}
                 videoRef={videoRef}
                 beatIndex={beatIndex}
                 pulse={pulse}
@@ -436,17 +524,18 @@ export default function LessonPage() {
               playing={playing}
               canPrev={currentSegment > 1}
               canNext={currentSegment < total}
+              currentSegment={currentSegment}
+              currentTime={currentTime}
+              duration={duration}
+              onSeekTime={seek}
               onTogglePlay={togglePlay}
               onPrev={handlePrev}
               onNext={handleNext}
               onMarkLearned={handleMarkLearned}
               learned={learnedSegments.includes(currentSegment)}
               segments={offsetSegments}
-              abLoop={abLoop}
               onSetA={() => handleSetAB('a')}
               onSetB={() => handleSetAB('b')}
-              onEnableAB={handleEnableAB}
-              onDisableAB={handleDisableAB}
               onClearAB={handleClearAB}
               onCompare={() => setCompareOpen((o) => !o)}
               comparing={compareOpen}

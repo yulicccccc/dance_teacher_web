@@ -11,6 +11,7 @@ import {
   Typography,
 } from '@mui/material'
 import { useLocalProgress, type CourseProgress } from '../hooks/useLocalProgress'
+import { formatDuration } from '../utils/format'
 
 export default function ProgressPage() {
   const navigate = useNavigate()
@@ -24,6 +25,10 @@ export default function ProgressPage() {
   const list = Object.entries(courses)
   const totalLearned = list.reduce(
     (sum, [, c]) => sum + c.progress.learnedSegments.length,
+    0,
+  )
+  const totalPracticeSeconds = list.reduce(
+    (sum, [, course]) => sum + course.progress.practiceSeconds,
     0,
   )
 
@@ -42,6 +47,7 @@ export default function ProgressPage() {
           const total = c.result.segments.length
           const learned = c.progress.learnedSegments.length
           const all = total > 0 && learned >= total
+          const completion = total > 0 ? Math.round((learned / total) * 100) : 0
           return (
             <Grid item xs={12} sm={6} md={4} key={vid}>
               <Card>
@@ -53,7 +59,7 @@ export default function ProgressPage() {
                       {c.videoName}
                     </Typography>
                     <Typography color={all ? 'success.main' : 'text.secondary'}>
-                      {learned}/{total} 小节 {all ? '✓' : ''}
+                      {learned}/{total} 小节 · {completion}% {all ? '✓' : ''}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                       当前：第 {c.progress.currentSegment} 节
@@ -67,7 +73,7 @@ export default function ProgressPage() {
       </Grid>
       <Box sx={{ mt: 4 }}>
         <Typography variant="body2" color="text.secondary">
-          统计：已学会 {totalLearned} 个小节 · 共 {list.length} 支舞
+          统计：已学会 {totalLearned} 个小节 · 累计练习 {formatDuration(totalPracticeSeconds)} · 共 {list.length} 支舞
         </Typography>
         <Button sx={{ mt: 2 }} variant="contained" onClick={() => navigate('/')}>
           上传新视频

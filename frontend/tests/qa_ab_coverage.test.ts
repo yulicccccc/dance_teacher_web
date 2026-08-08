@@ -36,8 +36,14 @@ function progress(over: Partial<LessonProgress> = {}): LessonProgress {
     currentSegment: 1,
     playbackRate: 1,
     mirror: true,
-    loopSegment: false,
+    beatMirror: true,
+    loopEnabled: false,
+    loopMode: 'single',
+    loopSegmentIds: [],
+    loopCount: null,
+    practiceSeconds: 0,
     voiceEnabled: false,
+    beatOffset: 0,
     learnedSegments: [],
     updatedAt: '2026-07-24T00:00:00Z',
     ...over,
@@ -53,52 +59,27 @@ const abEnabled: ABLoop = {
   aBeat: 5,
   bBeat: 13,
 }
-const abDisabled: ABLoop = { ...abEnabled, enabled: false }
-
-// ---------------------------------------------------------------------------
-// GAP 1: store-level bidirectional mutual exclusivity (核心不变量，原测试未覆盖)
-// ---------------------------------------------------------------------------
-describe('lessonStore — A→B loop 与单节循环双向互斥 (QA 独立补充)', () => {
+describe('lessonStore — one master loop switch with three modes', () => {
   beforeEach(() => {
     useLessonStore.getState().reset()
   })
 
-  it('启用单节循环会清空已配置的 A→B 循环', () => {
+  it('mode switching preserves AB points but only the selected mode runs', () => {
     useLessonStore.getState().setABLoop(abEnabled)
-    expect(useLessonStore.getState().abLoop).not.toBeNull()
-    useLessonStore.getState().setLoopSegment(true)
-    const s = useLessonStore.getState()
-    expect(s.loopSegment).toBe(true)
-    expect(s.abLoop).toBeNull()
+    useLessonStore.getState().setLoopMode('ab')
+    useLessonStore.getState().setLoopEnabled(true)
+    expect(useLessonStore.getState().loopEnabled).toBe(true)
+    useLessonStore.getState().setLoopMode('single')
+    expect(useLessonStore.getState().loopEnabled).toBe(true)
+    expect(useLessonStore.getState().abLoop).toEqual(abEnabled)
   })
 
-  it('启用 A→B 循环会清空已开启的单节循环', () => {
-    useLessonStore.getState().setLoopSegment(true)
-    expect(useLessonStore.getState().loopSegment).toBe(true)
+  it('clearing AB while AB mode is active disables the master loop', () => {
     useLessonStore.getState().setABLoop(abEnabled)
-    const s = useLessonStore.getState()
-    expect(s.abLoop).toEqual(abEnabled)
-    expect(s.loopSegment).toBe(false)
-  })
-
-  it('停用（enabled=false）A→B 循环不会误关单节循环', () => {
-    // 设计约定：仅「启用 AB」会清单节循环；配置/停用 AB 时单节循环保持原状。
-    useLessonStore.getState().setLoopSegment(true)
-    useLessonStore.getState().setABLoop(abDisabled) // enabled=false -> 不清单节
-    const s = useLessonStore.getState()
-    expect(s.abLoop).toEqual(abDisabled)
-    expect(s.loopSegment).toBe(true)
-  })
-
-  it('清除（setABLoop(null)）A→B 循环不影响单节循环状态', () => {
-    useLessonStore.getState().setLoopSegment(true)
-    useLessonStore.getState().setABLoop(abEnabled) // 此时单节被清
-    expect(useLessonStore.getState().loopSegment).toBe(false)
-    useLessonStore.getState().setLoopSegment(true) // 重新开单节，会被清 abLoop
-    expect(useLessonStore.getState().abLoop).toBeNull()
+    useLessonStore.getState().setLoopMode('ab')
+    useLessonStore.getState().setLoopEnabled(true)
     useLessonStore.getState().setABLoop(null)
-    expect(useLessonStore.getState().abLoop).toBeNull()
-    expect(useLessonStore.getState().loopSegment).toBe(true)
+    expect(useLessonStore.getState().loopEnabled).toBe(false)
   })
 })
 
@@ -122,14 +103,14 @@ describe('useLocalProgress — abLoop 持久化 round-trip (QA 独立补充)', (
     expect(loaded.courses.vidA.progress.abLoop).toEqual(abEnabled)
   })
 
-  it('不带 abLoop 的旧进度 round-trip 后保持 undefined（hydrate 用 ?? null）', async () => {
+  it('不带 abLoop 的旧进度会迁移为明确的 null', async () => {
     const store = {
       version: 1,
       courses: { vidB: course('vidB', smallResult(), progress()) }, // 无 abLoop
     }
     await saveStore(store)
     const loaded = await loadStore()
-    expect(loaded.courses.vidB.progress.abLoop).toBeUndefined()
+    expect(loaded.courses.vidB.progress.abLoop).toBeNull()
   })
 })
 

@@ -7,6 +7,7 @@ import BeatOverlay from './BeatOverlay'
 interface Props {
   src: string
   mirror: boolean
+  beatMirror: boolean
   videoRef: RefObject<HTMLVideoElement>
   beatIndex: number
   pulse: boolean
@@ -31,7 +32,17 @@ interface Props {
  * the beat overlay scale together with the video; `requestFullscreen` only
  * enlarges the container and leaves the inner layout untouched.
  */
-export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse, stepBeat, onDotClick, total }: Props) {
+export default function VideoPlayer({
+  src,
+  mirror,
+  beatMirror,
+  videoRef,
+  beatIndex,
+  pulse,
+  stepBeat,
+  onDotClick,
+  total,
+}: Props) {
   const mirrorSx: SxProps<Theme> = mirror
     ? { transform: 'scaleX(-1)' }
     : { transform: 'none' }
@@ -70,30 +81,27 @@ export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse, s
       // split the play area into LEFT / RIGHT halves by the container rect:
       //   * right half -> NEXT beat (stepBeat(+1))
       //   * left  half -> PREVIOUS beat (stepBeat(-1))
-      // In mirror view the on-screen left/right is flipped, so the mapping is
-      // inverted to match what the user sees. Play/pause is driven by the
-      // external ControlBar (no single-click gesture here), so the double-click
-      // gesture cannot conflict with it.
+      // Gesture direction is physical screen direction and deliberately does
+      // not change when the video image is mirrored.
       onDoubleClick={(e) => {
         e.preventDefault()
         const el = containerRef.current
         if (!el || !stepBeat) return
         const rect = el.getBoundingClientRect()
         const onRightHalf = e.clientX - rect.left > rect.width / 2
-        const dir: 1 | -1 = onRightHalf
-          ? mirror
-            ? -1
-            : 1
-          : mirror
-            ? 1
-            : -1
-        stepBeat(dir)
+        stepBeat(onRightHalf ? 1 : -1)
       }}
     >
       <Box className="w-full h-full" sx={mirrorSx}>
         <video ref={videoRef} src={src} className="w-full h-full object-contain" playsInline />
       </Box>
-      <BeatOverlay beatIndex={beatIndex} pulse={pulse} mirror={mirror} total={total} onDotClick={onDotClick} />
+      <BeatOverlay
+        beatIndex={beatIndex}
+        pulse={pulse}
+        mirror={beatMirror}
+        total={total}
+        onDotClick={onDotClick}
+      />
       <IconButton
         onClick={toggleFullscreen}
         // Swallow double-clicks so rapidly toggling fullscreen does not bubble
