@@ -262,6 +262,7 @@ export function useBeatSync(
   // Serialised id list; lets the rAF loop cheaply detect a selection change and
   // rebuild `loopTargetsRef` + re-anchor the cursor without diffing each frame.
   const loopIdsKeyRef = useRef('')
+  const loopConfigKey = `${loopMode}:${loopSegmentIds.join(',')}`
   // Isolated guard flag for the custom A→B loop's OWN programmatic seek-back,
   // kept separate from `seekingForLoopRef` so the two loop kinds never
   // mis-classify each other's seeks (T3 hardening).
@@ -586,6 +587,29 @@ export function useBeatSync(
   useEffect(() => {
     loopIterationRef.current = 0
   }, [loopCount])
+
+  // Changing between single- and multi-segment looping starts a fresh loop
+  // run. Without clearing both targets here, a segment selected in multi mode
+  // can remain latched after switching back to single mode and pull playback
+  // to the wrong phrase.
+  useEffect(() => {
+    loopIterationRef.current = 0
+    loopTargetsRef.current = []
+    loopCursorRef.current = 0
+    loopIdsKeyRef.current = ''
+
+    const video = videoRef.current
+    if (!loopRef.current || !video) {
+      loopTargetRef.current = null
+      return
+    }
+    if (loopMode === 'multi' && loopSegmentIds.length > 0) {
+      loopTargetRef.current = null
+      return
+    }
+    const loc = locateBeat(segments, video.currentTime, video.currentTime)
+    loopTargetRef.current = loc.activeSegment || null
+  }, [loopConfigKey, loopMode, loopSegmentIds.length, segments, videoRef])
 
   /**
    * Jump the playhead to the adjacent beat timestamp and freeze there.

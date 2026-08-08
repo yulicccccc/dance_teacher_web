@@ -227,6 +227,56 @@ describe('useBeatSync — multi-segment loop (Part 2)', () => {
     container.remove()
   })
 
+  it('switching multi to single starts a fresh loop on the playhead segment', () => {
+    const segments = makeSegments()
+    const { videoRef, video, timeLog, root, container } = setup({
+      segments,
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+      loopMode: 'multi',
+      loopSegmentIds: [1, 3],
+    })
+    act(() => {
+      video.currentTime = 1
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+
+    // Finish the first selected block so multi-loop moves the playhead to seg3.
+    act(() => {
+      video.currentTime = 4.51
+    })
+    timeLog.length = 0
+    step()
+    expect(video.currentTime).toBeCloseTo(7.5)
+
+    // Switch modes without a seeked event. Single-loop must re-lock to seg3,
+    // not retain multi-loop's old seg1 target.
+    act(() => {
+      video.currentTime = 9
+      root.render(
+        <Harness
+          videoRef={videoRef}
+          segments={segments}
+          loop={true}
+          offset={0}
+          beatDuration={0.5}
+          loopMode="single"
+          loopSegmentIds={[1, 3]}
+        />,
+      )
+    })
+
+    const loopBacks: number[] = []
+    drive(video, timeLog, 9, 1000, 0.01, (x) => loopBacks.push(x))
+    expect(loopBacks.some((x) => Math.abs(x - 7.5) < 1e-3)).toBe(true)
+    expect(loopBacks.some((x) => Math.abs(x) < 1e-3)).toBe(false)
+
+    root.unmount()
+    container.remove()
+  })
+
   it('inactive (compare-mode) engine issues no loop seek', () => {
     // When `active=false` the engine must only keep prevTime fresh — driving the
     // playhead well past seg1's loopEnd must NOT produce any seek.
