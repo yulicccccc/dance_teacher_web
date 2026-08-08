@@ -1,9 +1,11 @@
 import {
   Box,
   Button,
+  FormControlLabel,
   IconButton,
   Slider,
   Stack,
+  Switch,
   Tooltip,
   Typography,
 } from '@mui/material'
@@ -91,19 +93,14 @@ export default function ControlBar({
   const setPlaybackRate = useLessonStore((s) => s.setPlaybackRate)
   const mirror = useLessonStore((s) => s.mirror)
   const setMirror = useLessonStore((s) => s.setMirror)
-  const beatMirror = useLessonStore((s) => s.beatMirror)
-  const setBeatMirror = useLessonStore((s) => s.setBeatMirror)
   const loopSegment = useLessonStore((s) => s.loopSegment)
   const setLoopSegment = useLessonStore((s) => s.setLoopSegment)
-  const loopMode = useLessonStore((s) => s.loopMode)
-  const loopSegmentIds = useLessonStore((s) => s.loopSegmentIds)
   const voiceEnabled = useLessonStore((s) => s.voiceEnabled)
   const setVoiceEnabled = useLessonStore((s) => s.setVoiceEnabled)
   const beatOffset = useLessonStore((s) => s.beatOffset)
   const setBeatOffset = useLessonStore((s) => s.setBeatOffset)
-  // 草稿偏移：滑块只改它，确认后才同步到 beatOffset（网格重切）。
-  const draftBeatOffset = useLessonStore((s) => s.draftBeatOffset)
-  const setDraftBeatOffset = useLessonStore((s) => s.setDraftBeatOffset)
+  const loopCount = useLessonStore((s) => s.loopCount)
+  const setLoopCount = useLessonStore((s) => s.setLoopCount)
 
   // A loop with aTime >= bTime is degenerate (A not before B) -> cannot enable.
   const abIncomplete = abLoop != null && abLoop.aTime >= abLoop.bTime
@@ -172,52 +169,26 @@ export default function ControlBar({
           </Button>
         </Stack>
 
-        {/* 循环总开关：文案/提示跟随 loopMode 与勾选状态，避免用户困惑
-            （例如选了「多选段落」后按钮仍显示「单节循环」）。 */}
-        <Tooltip
-          title={
-            loopMode === 'single'
-              ? '单节循环（含前后各一拍过渡，衔接更顺）'
-              : loopSegmentIds.length > 0
-                ? `多选段落循环（已选 ${loopSegmentIds.length} 段，连续段自动合并）`
-                : '多选模式下请先勾选要循环的段落'
-          }
-        >
-          <span>
-            <Button
-              variant={loopSegment ? 'contained' : 'outlined'}
-              startIcon={<ReplayIcon />}
-              disabled={loopMode === 'multi' && loopSegmentIds.length === 0}
-              onClick={() => setLoopSegment(!loopSegment)}
-            >
-              {loopMode === 'single'
-                ? '单节循环'
-                : loopSegmentIds.length > 0
-                  ? `多选循环 (${loopSegmentIds.length})`
-                  : '多选循环'}
-            </Button>
-          </span>
+        <Tooltip title="单节循环（含前后各一拍过渡，衔接更顺）">
+          <Button
+            variant={loopSegment ? 'contained' : 'outlined'}
+            startIcon={<ReplayIcon />}
+            onClick={() => setLoopSegment(!loopSegment)}
+          >
+            单节循环
+          </Button>
         </Tooltip>
-        {/* 多选段落循环配置：single/multi 切换 + 段落勾选清单。
-            始终挂载；loopMode 与勾选状态决定上方主循环按钮的文案与可用性，
-            真正循环与否仍由 loopSegment 主开关控制。 */}
+        {/* 多选段落循环配置：single/multi 切换 + 段落勾选清单（空选退化为单节）。
+            始终挂载；loopMode 仅决定 useBeatSync 的循环方式，真正循环与否仍由
+            上方「单节循环」主开关（loopSegment）控制。 */}
         <LoopPanel segments={segments} />
-        <Tooltip title="镜像翻转视频画面（默认开，模拟镜面）">
+        <Tooltip title="镜像翻转（默认开，模拟镜面）">
           <Button
             variant={mirror ? 'contained' : 'outlined'}
             startIcon={<FlipIcon />}
             onClick={() => setMirror(!mirror)}
           >
-            视频镜像
-          </Button>
-        </Tooltip>
-        <Tooltip title="仅镜像拍点叠层（数字与圆点），与视频镜像独立">
-          <Button
-            variant={beatMirror ? 'contained' : 'outlined'}
-            startIcon={<FlipIcon />}
-            onClick={() => setBeatMirror(!beatMirror)}
-          >
-            拍子镜像
+            镜像
           </Button>
         </Tooltip>
         <Tooltip title="口令提示（语音数拍）">
@@ -245,6 +216,52 @@ export default function ControlBar({
             {comparing ? '退出对照' : '对照练习'}
           </Button>
         </Tooltip>
+      </Stack>
+
+      {/* 循环次数限制：默认关闭 = 无限循环；开启后滑条 3–10 次。
+          对单节循环与 AB 循环都生效；到数后退出并继续播放。 */}
+      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+        <FormControlLabel
+          control={
+            <Switch
+              checked={loopCount != null}
+              onChange={(e) => setLoopCount(e.target.checked ? 5 : null)}
+            />
+          }
+          label="限制循环次数"
+        />
+        {loopCount != null && (
+          <>
+            <Slider
+              size="small"
+              min={3}
+              max={10}
+              step={1}
+              value={loopCount}
+              onChange={(_, v) => setLoopCount(v as number)}
+              valueLabelDisplay="auto"
+              valueLabelFormat={(v) => `${v} 次`}
+              aria-label="循环次数"
+              sx={{ width: 160 }}
+            />
+            <Typography
+              variant="body2"
+              sx={{
+                whiteSpace: 'nowrap',
+                minWidth: 44,
+                textAlign: 'right',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {`${loopCount} 次`}
+            </Typography>
+            <Tooltip title="对单节循环和 AB 循环都生效；到数后退出并继续播放">
+              <Typography variant="caption" color="text.secondary">
+                到数后继续播
+              </Typography>
+            </Tooltip>
+          </>
+        )}
       </Stack>
 
       {/* 自定义 A→B 循环（以拍子为单位，与单节循环互斥） */}
@@ -310,8 +327,8 @@ export default function ControlBar({
           <Button
             size="small"
             variant="outlined"
-            onClick={() => setDraftBeatOffset(draftBeatOffset - 1)}
-            disabled={draftBeatOffset <= -4}
+            onClick={() => setBeatOffset(beatOffset - 1)}
+            disabled={beatOffset <= -4}
             aria-label="计数减一拍"
           >
             −1 拍
@@ -321,8 +338,8 @@ export default function ControlBar({
             min={-4}
             max={4}
             step={1}
-            value={draftBeatOffset}
-            onChange={(_, v) => setDraftBeatOffset(v as number)}
+            value={beatOffset}
+            onChange={(_, v) => setBeatOffset(v as number)}
             valueLabelDisplay="auto"
             valueLabelFormat={(v) => `${v > 0 ? '+' : ''}${v} 拍`}
             aria-label="拍点计数偏移（拍）"
@@ -330,8 +347,8 @@ export default function ControlBar({
           <Button
             size="small"
             variant="outlined"
-            onClick={() => setDraftBeatOffset(draftBeatOffset + 1)}
-            disabled={draftBeatOffset >= 4}
+            onClick={() => setBeatOffset(beatOffset + 1)}
+            disabled={beatOffset >= 4}
             aria-label="计数加一拍"
           >
             +1 拍
@@ -340,21 +357,8 @@ export default function ControlBar({
             variant="body2"
             sx={{ whiteSpace: 'nowrap', minWidth: 44, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
           >
-            {`${draftBeatOffset > 0 ? '+' : ''}${draftBeatOffset} 拍`}
+            {`${beatOffset > 0 ? '+' : ''}${beatOffset} 拍`}
           </Typography>
-          <Tooltip title={draftBeatOffset === beatOffset ? '偏移已应用' : '按当前偏移重新计算拍子并应用到循环'}>
-            <span>
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                onClick={() => setBeatOffset(draftBeatOffset)}
-                disabled={draftBeatOffset === beatOffset}
-              >
-                重新计算拍子
-              </Button>
-            </span>
-          </Tooltip>
         </Stack>
       </Box>
 

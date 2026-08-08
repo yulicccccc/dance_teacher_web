@@ -3,8 +3,6 @@ import {
   locateBeat,
   computeLoopSegment,
   computePaddedLoopBounds,
-  buildLoopBlocks,
-  computePaddedLoopBoundsForBlock,
 } from '../src/hooks/useBeatSync'
 import type { Segment } from '../src/types/api'
 
@@ -251,69 +249,5 @@ describe('QA 独立回归 — 循环 padding 边界', () => {
       expect(r.loopEnd).toBeLessThanOrEqual(mediaEnd)
       expect(r.loopEnd).toBeGreaterThan(r.loopStart)
     }
-  })
-})
-
-describe('buildLoopBlocks — 连续勾选合并', () => {
-  const segs = makeUniformSegments(5)
-
-  it('merges contiguous ids into one block', () => {
-    const blocks = buildLoopBlocks(segs, [3, 4])
-    expect(blocks).toHaveLength(1)
-    expect(blocks[0].segments.map((s) => s.index)).toEqual([3, 4])
-  })
-
-  it('keeps non-contiguous ids as separate blocks', () => {
-    const blocks = buildLoopBlocks(segs, [1, 3, 5])
-    expect(blocks).toHaveLength(3)
-    expect(blocks.map((b) => b.segments.map((s) => s.index))).toEqual([
-      [1],
-      [3],
-      [5],
-    ])
-  })
-
-  it('groups mixed contiguous and isolated ids', () => {
-    const blocks = buildLoopBlocks(segs, [1, 2, 4])
-    expect(blocks).toHaveLength(2)
-    expect(blocks.map((b) => b.segments.map((s) => s.index))).toEqual([
-      [1, 2],
-      [4],
-    ])
-  })
-
-  it('returns empty array for empty selection', () => {
-    expect(buildLoopBlocks(segs, [])).toEqual([])
-  })
-})
-
-describe('computePaddedLoopBoundsForBlock — 合并块前后各加一拍', () => {
-  const segs = makeUniformSegments(5)
-
-  it('interior contiguous block [3,4]: padded by one beat on both sides', () => {
-    const block = buildLoopBlocks(segs, [3, 4])[0]
-    const r = computePaddedLoopBoundsForBlock(block, segs, 0.5)
-    expect(r.loopStart).toBeCloseTo(8 - 0.5) // seg3.start - 0.5 = 7.5
-    expect(r.loopEnd).toBeCloseTo(16 + 0.5) // seg4.end + 0.5 = 16.5
-  })
-
-  it('block starting at first segment: no lead-in pad', () => {
-    const block = buildLoopBlocks(segs, [1, 2])[0]
-    const r = computePaddedLoopBoundsForBlock(block, segs, 0.5)
-    expect(r.loopStart).toBe(0)
-    expect(r.loopEnd).toBeCloseTo(8 + 0.5) // seg2.end + 0.5 = 8.5
-  })
-
-  it('block ending at last segment: no trailing pad', () => {
-    const block = buildLoopBlocks(segs, [4, 5])[0]
-    const r = computePaddedLoopBoundsForBlock(block, segs, 0.5)
-    expect(r.loopStart).toBeCloseTo(12 - 0.5) // 11.5
-    expect(r.loopEnd).toBe(20)
-  })
-
-  it('single-segment block behaves like computePaddedLoopBounds', () => {
-    const block = buildLoopBlocks(segs, [3])[0]
-    const r = computePaddedLoopBoundsForBlock(block, segs, 0.5)
-    expect(r).toEqual(computePaddedLoopBounds(segs[2], segs, 0.5))
   })
 })

@@ -7,8 +7,6 @@ import BeatOverlay from './BeatOverlay'
 interface Props {
   src: string
   mirror: boolean
-  /** Mirror ONLY the beat overlay (count/dots); independent of the video mirror. */
-  beatMirror: boolean
   videoRef: RefObject<HTMLVideoElement>
   beatIndex: number
   pulse: boolean
@@ -33,7 +31,7 @@ interface Props {
  * the beat overlay scale together with the video; `requestFullscreen` only
  * enlarges the container and leaves the inner layout untouched.
  */
-export default function VideoPlayer({ src, mirror, beatMirror, videoRef, beatIndex, pulse, stepBeat, onDotClick, total }: Props) {
+export default function VideoPlayer({ src, mirror, videoRef, beatIndex, pulse, stepBeat, onDotClick, total }: Props) {
   const mirrorSx: SxProps<Theme> = mirror
     ? { transform: 'scaleX(-1)' }
     : { transform: 'none' }
@@ -69,28 +67,33 @@ export default function VideoPlayer({ src, mirror, beatMirror, videoRef, beatInd
       ref={containerRef}
       className="relative w-full aspect-video bg-black rounded-xl overflow-hidden"
       // Double-click gesture: jump to the adjacent beat and freeze there. We
-      // split the play area into LEFT / RIGHT halves by the container rect,
-      // screen-based (just like a browser's left=back / right=forward):
+      // split the play area into LEFT / RIGHT halves by the container rect:
       //   * right half -> NEXT beat (stepBeat(+1))
       //   * left  half -> PREVIOUS beat (stepBeat(-1))
-      // Mirror only flips the *video pixels*, NOT the user's screen-space intent,
-      // so we deliberately ignore `mirror` here — clicking the left of the
-      // screen always means "previous beat" regardless of how the video looks.
-      // Play/pause is driven by the external ControlBar (no single-click gesture
-      // here), so the double-click gesture cannot conflict with it.
+      // In mirror view the on-screen left/right is flipped, so the mapping is
+      // inverted to match what the user sees. Play/pause is driven by the
+      // external ControlBar (no single-click gesture here), so the double-click
+      // gesture cannot conflict with it.
       onDoubleClick={(e) => {
         e.preventDefault()
         const el = containerRef.current
         if (!el || !stepBeat) return
         const rect = el.getBoundingClientRect()
         const onRightHalf = e.clientX - rect.left > rect.width / 2
-        stepBeat(onRightHalf ? 1 : -1)
+        const dir: 1 | -1 = onRightHalf
+          ? mirror
+            ? -1
+            : 1
+          : mirror
+            ? 1
+            : -1
+        stepBeat(dir)
       }}
     >
       <Box className="w-full h-full" sx={mirrorSx}>
         <video ref={videoRef} src={src} className="w-full h-full object-contain" playsInline />
       </Box>
-      <BeatOverlay beatIndex={beatIndex} pulse={pulse} mirror={beatMirror} total={total} onDotClick={onDotClick} />
+      <BeatOverlay beatIndex={beatIndex} pulse={pulse} mirror={mirror} total={total} onDotClick={onDotClick} />
       <IconButton
         onClick={toggleFullscreen}
         // Swallow double-clicks so rapidly toggling fullscreen does not bubble

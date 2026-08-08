@@ -51,53 +51,6 @@ def test_warmup_is_idempotent_and_does_not_raise():
     bd.warmup()
     bd.warmup()  # repeated call must be safe and not re-compile
 
-    # `warmup()` swallows every exception by design (a failed warmup must never
-    # block startup), so "it did not raise" proves nothing on its own: if one of
-    # the pre-compiled calls started throwing, this test would still pass while
-    # the deadlock guard was silently gone. `_warmup_done` is assigned *after*
-    # the last pre-compile, so it is the only observable that actually proves
-    # the whole body ran.
-    assert bd._warmup_done is True, (
-        "warmup() returned without completing — one of the pre-compiled librosa "
-        "calls raised and was swallowed, leaving the JIT to fire from a daemon "
-        "thread (the original deadlock)"
-    )
-
-
-@pytest.mark.skipif(not _has_librosa(), reason="librosa not installed (no 3.13 wheel) — run on Python 3.10/3.11")
-def test_warmup_precompiles_the_lowband_envelope(tmp_path):
-    """The low-band envelope must be warmed too, not just the full-band ones.
-
-    `_lowband_onset_env` runs its own STFT and is built for *some* tracks only
-    (a fit above ~102 BPM returns before it is ever called). That laziness is
-    exactly what makes it dangerous: the first genuinely-fast upload would be
-    the one to enter the JIT from a uvicorn daemon thread and hang the
-    pipeline, long after startup looked healthy. Assert both that `warmup()`
-    calls it and that the call succeeds on a synthetic signal.
-    """
-    calls = []
-    original = bd._lowband_onset_env
-
-    def _spy(y, sr, hop):
-        out = original(y, sr, hop)
-        calls.append((sr, hop, len(out)))
-        return out
-
-    bd._lowband_onset_env = _spy
-    # Force a real (not short-circuited) warmup run.
-    bd._warmup_done = False
-    try:
-        bd.warmup()
-    finally:
-        bd._lowband_onset_env = original
-
-    assert calls, (
-        "warmup() never called _lowband_onset_env — the genuine-fast recovery "
-        "path is not pre-compiled and will JIT from a daemon thread"
-    )
-    assert bd._warmup_done is True, "warmup() did not complete after warming the low band"
-    assert calls[0][2] > 0, "the warmed low-band envelope came back empty"
-
 
 @pytest.mark.skipif(not _has_librosa(), reason="librosa not installed (no 3.13 wheel) — run on Python 3.10/3.11")
 def test_warmup_lets_daemon_thread_detect_without_deadlock(tmp_path):

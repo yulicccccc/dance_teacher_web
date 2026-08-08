@@ -1,31 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AppBar, Box, Button, Container, Toolbar, Typography } from '@mui/material'
 import Uploader from '../components/Uploader'
-import { registerVideo } from '../storage/videoRegistry'
-import { startLocalAnalysis } from '../api/localAnalysis'
-import { buildDemoResult } from '../demo/sampleLesson'
+import { apiClient } from '../api/client'
 
 export default function UploadPage() {
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
-  const [analyzing, setAnalyzing] = useState(false)
+  const [warming, setWarming] = useState(false)
 
-  // Kick off the entire pipeline in the browser, then move to the progress page.
-  const handleStart = (file: File) => {
-    setError(null)
-    setAnalyzing(true)
-    void (async () => {
-      try {
-        const videoId = await registerVideo(file)
-        const taskId = await startLocalAnalysis(file, videoId)
-        navigate(`/analyze/${taskId}`, { state: { videoId } })
-      } catch (e) {
-        setAnalyzing(false)
-        setError(e instanceof Error ? e.message : '分析失败，请重试')
-      }
-    })()
-  }
+  useEffect(() => {
+    // Fire-and-forget backend warm-up (Render cold start). Result is ignored.
+    setWarming(true)
+    void apiClient.warmup().finally(() => setWarming(false))
+  }, [])
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
@@ -42,34 +30,17 @@ export default function UploadPage() {
           上传你的舞蹈视频
         </Typography>
         <Typography color="text.secondary" sx={{ mb: 4 }}>
-          视频全程在你的浏览器本地分析，不上传任何服务器，拆好 8 拍小节后即可像舞室老师一样一小节一小节带练。
+          上传后网站会自动按 8 拍拆成小节，像舞室老师一样一小节一小节带练。视频仅用于本地学习、不外传。
         </Typography>
-        {analyzing && (
+        {warming && (
           <Typography variant="caption" color="text.secondary" sx={{ mb: 1 }}>
-            正在本地分析节拍，请稍候…
+            正在唤醒服务器…
           </Typography>
         )}
         <Uploader
-          onStart={handleStart}
-          onError={(m) => {
-            setError(m)
-            setAnalyzing(false)
-          }}
+          onUploaded={(taskId, videoId) => navigate(`/analyze/${taskId}`, { state: { videoId } })}
+          onError={setError}
         />
-        <Button
-          variant="outlined"
-          fullWidth
-          sx={{ mt: 2 }}
-          disabled={analyzing}
-          onClick={() =>
-            navigate('/lesson/demo', { state: { demoResult: buildDemoResult(), videoId: 'demo' } })
-          }
-        >
-          试用示例（无需上传）
-        </Button>
-        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          内置示例拍点，可离线测试所有交互
-        </Typography>
         {error && (
           <Typography color="error" sx={{ mt: 2 }}>
             {error}

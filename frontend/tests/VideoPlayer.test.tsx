@@ -1,7 +1,6 @@
 // Tests for VideoPlayer double-click gesture (Part 2): the play area is split
-// into LEFT/RIGHT halves by its bounding rect; right = next beat (+1), left =
-// previous beat (-1). The mapping is screen-based and does NOT flip under
-// mirror view (mirror only flips the video pixels, not the user's intent).
+// into LEFT/RIGHT halves by its bounding rect; right = next beat, left =
+// previous beat, and the mapping flips under mirror view.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRef, type RefObject } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -23,7 +22,7 @@ const rectMock = {
   toJSON: () => ({}),
 } as DOMRect
 
-function setup(opts: { mirror: boolean; beatMirror?: boolean }) {
+function setup(opts: { mirror: boolean }) {
   const videoRef = createRef<HTMLVideoElement>()
   const stepBeat = vi.fn()
   const container = document.createElement('div')
@@ -34,7 +33,6 @@ function setup(opts: { mirror: boolean; beatMirror?: boolean }) {
       <VideoPlayer
         src="dummy.mp4"
         mirror={opts.mirror}
-        beatMirror={opts.beatMirror ?? false}
         videoRef={videoRef}
         beatIndex={1}
         pulse={false}
@@ -81,17 +79,17 @@ describe('VideoPlayer double-click split-screen', () => {
     expect(stepBeat).toHaveBeenCalledWith(-1)
   })
 
-  it('mirror does NOT change the mapping: right half -> next beat (+1)', () => {
+  it('mirror flips the mapping: right half -> previous beat', () => {
     const { box, stepBeat } = setup({ mirror: true })
-    dblClick(box, 150) // right half -> always +1, even mirrored
-    expect(stepBeat).toHaveBeenCalledTimes(1)
-    expect(stepBeat).toHaveBeenCalledWith(1)
-  })
-
-  it('mirror does NOT change the mapping: left half -> previous beat (-1)', () => {
-    const { box, stepBeat } = setup({ mirror: true })
-    dblClick(box, 50) // left half -> always -1, even mirrored
+    dblClick(box, 150) // right half, but mirrored -> -1
     expect(stepBeat).toHaveBeenCalledTimes(1)
     expect(stepBeat).toHaveBeenCalledWith(-1)
+  })
+
+  it('mirror flips the mapping: left half -> next beat', () => {
+    const { box, stepBeat } = setup({ mirror: true })
+    dblClick(box, 50) // left half, but mirrored -> +1
+    expect(stepBeat).toHaveBeenCalledTimes(1)
+    expect(stepBeat).toHaveBeenCalledWith(1)
   })
 })

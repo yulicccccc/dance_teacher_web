@@ -5,13 +5,16 @@ import {
   LinearProgress,
   Paper,
   Stack,
+  TextField,
   Typography,
 } from '@mui/material'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
-import { validateVideoFile } from '../utils/mediaValidate'
+import LinkIcon from '@mui/icons-material/Link'
+import { http } from '../api/client'
+import type { UploadResponse } from '../types/api'
 
 interface Props {
-  onStart: (file: File) => void
+  onUploaded: (taskId: string, videoId: string) => void
   onError: (msg: string) => void
 }
 
@@ -20,35 +23,76 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-/**
- * Local-first file picker. No URL entry, no network — selecting a file and
- * clicking 「开始分析」 hands the File to the caller, which runs the whole
- * analysis pipeline in the browser.
- */
-export default function Uploader({ onStart, onError }: Props) {
+/** Stable per-video id so progress survives re-uploads of the same file. */
+function computeVideoId(file: File | null, url: string): string {
+  const raw = file ? `${file.name}:${file.size}:${file.lastModified}` : url || String(Math.random())
+  let h = 0
+  for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) | 0
+  return `v${h >>> 0}`
+}
+
+export default function Uploader({ onUploaded, onError }: Props) {
   const [file, setFile] = useState<File | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [url, setUrl] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [progress, setProgress] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleSelect = (files: FileList | null) => {
-    if (files && files.length > 0) setFile(files[0])
+    if (files && files.length > 0) {
+      const f = files[0]
+      setFile(f)
+      setUrl('')
+    }
   }
 
-  const submit = () => {
-    if (!file) {
-      onError('请选择一个舞蹈视频文件')
-      return
-    }
-    const v = validateVideoFile(file)
-    if (!v.ok) {
-      onError(v.message ?? '文件不符合要求')
-      return
-    }
-    setBusy(true)
+  const submit = async () => {
+    setUploading(true)
+    setProgress(file ? 0 : 100)
     try {
-      onStart(file)
+      let resp: UploadResponse
+      if (file) {
+        const form = new FormData()
+        form.append('file', file)
+        const { data } = await http.post<UploadResponse>('/upload', form, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          // Extended timeout (5 min) covers cold-start wake-up + large upload.
+          timeout: 300000,
+          onUploadProgress: (e) => {
+            if (e.total) setProgress(Math.round((e.loaded / e.total) * 100))
+          },
+        })
+        resp = data
+      } else if (url.trim()) {
+        const { data } = await http.post<UploadResponse>('/upload', { url: url.trim() }, {
+          timeout: 300000,
+        })
+        resp = data
+      } else {
+        onError('请选择本地视频或粘贴视频链接')
+        setUploading(false)
+        return
+      }
+      onUploaded(resp.taskId, computeVideoId(file, url))
+    } catch (e) {
+      const err = e as {
+        code?: string
+        response?: { data?: { message?: string } }
+        message?: string
+      }
+      const msgLower = (err?.message ?? '').toLowerCase()
+      const isTimeoutOrNetwork =
+        err?.code === 'ECONNABORTED' ||
+        msgLower.includes('timeout') ||
+        msgLower.includes('network')
+      // On timeout / network errors keep the selected file so the user can just
+      // retry without re-picking it.
+      const msg = isTimeoutOrNetwork
+        ? '服务器正在启动或网络较慢，文件已保留，请稍候点击【开始分析】再试一次'
+        : err?.response?.data?.message ?? err?.message ?? '上传失败'
+      onError(msg)
     } finally {
-      setBusy(false)
+      setUploading(false)
     }
   }
 
@@ -98,18 +142,30 @@ export default function Uploader({ onStart, onError }: Props) {
               （{formatSize(file.size)}）
             </Typography>
           </Stack>
-          {busy && <LinearProgress sx={{ mt: 1 }} />}
+          {uploading && <LinearProgress variant="determinate" value={progress} sx={{ mt: 1 }} />}
         </Box>
       )}
+
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ width: '100%' }}>
+        <LinkIcon color="action" />
+        <TextField
+          fullWidth
+          size="small"
+          placeholder="或粘贴视频链接（可选）"
+          value={url}
+          disabled={!!file}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+      </Stack>
 
       <Button
         variant="contained"
         size="large"
-        disabled={busy || !file}
+        disabled={uploading || (!file && !url.trim())}
         onClick={submit}
         sx={{ minWidth: 200 }}
       >
-        {busy ? '正在准备…' : '开始分析'}
+        {uploading ? '正在上传…' : '开始分析'}
       </Button>
     </Stack>
   )

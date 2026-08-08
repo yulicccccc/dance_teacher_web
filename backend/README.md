@@ -14,7 +14,7 @@ backend/
     │   ├── upload.py          # POST /api/v1/upload + GET /api/v1/video/{taskId}
     │   └── analysis.py        # 状态 / 结果 / 重试 / 重算
     ├── services/
-    │   ├── audio_extractor.py # ffmpeg 提取 22.05kHz mono wav
+    │   ├── audio_extractor.py # ffmpeg 提取 16kHz mono wav
     │   ├── beat_detector.py   # librosa BPM / beat 检测 (懒加载)
     │   ├── segmenter.py       # 8 拍聚合
     │   └── task_manager.py    # 任务状态机 (内存 + json 落盘)

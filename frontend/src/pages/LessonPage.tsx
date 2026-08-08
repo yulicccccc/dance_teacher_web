@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   Box,
@@ -12,8 +12,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import { getLocalResult, recomputeLocalTask } from '../api/localAnalysis'
-import { getVideo } from '../storage/videoRegistry'
+import apiClient, { extractApiError } from '../api/client'
 import { useVideoControls } from '../hooks/useVideoControls'
 import { useBeatSync } from '../hooks/useBeatSync'
 import { usePlayPauseSync } from '../hooks/usePlayPauseSync'
@@ -28,7 +27,6 @@ import BeatInfoCard from '../components/BeatInfoCard'
 import { resegmentSegments, findBeatAt } from '../utils/segmentMath'
 import { resolveCompareSegment } from '../utils/compare'
 import { pickChineseVoice } from '../utils/voice'
-import { DEMO_VIDEO_URL } from '../demo/sampleLesson'
 import type { AnalysisResult, RecomputeMode } from '../types/api'
 
 const CHINESE_NUM = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
@@ -39,10 +37,6 @@ export default function LessonPage() {
   const navigate = useNavigate()
   const videoId: string =
     (location.state as { videoId?: string } | null)?.videoId ?? taskId ?? ''
-
-  // 「试用示例」模式：UploadPage 通过 navigate state 注入一份内置 AnalysisResult，
-  // 此时完全跳过后端 getResult 拉取，直接用 demoResult 作为数据源（见下方 early effect）。
-  const demoResult = (location.state as { demoResult?: AnalysisResult } | null)?.demoResult ?? null
 
   const { videoRef, play, togglePlay, seek, setRate } = useVideoControls()
   const { ready, getCourse, saveCourse, updateProgress, markLearned } = useLocalProgress()
@@ -56,20 +50,13 @@ export default function LessonPage() {
   const [snack, setSnack] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
   const [compareOpen, setCompareOpen] = useState(false)
-  // Local video source: object URL from the registry / IndexedDB. Null while
-  // resolving (or empty string when the blob is unavailable after a reload).
-  const [videoSrc, setVideoSrc] = useState<string | null>(
-    demoResult ? DEMO_VIDEO_URL : null,
-  )
 
   const currentSegment = useLessonStore((s) => s.currentSegment)
   const playbackRate = useLessonStore((s) => s.playbackRate)
   const mirror = useLessonStore((s) => s.mirror)
-  const beatMirror = useLessonStore((s) => s.beatMirror)
   const loopSegment = useLessonStore((s) => s.loopSegment)
   const voiceEnabled = useLessonStore((s) => s.voiceEnabled)
   const beatOffset = useLessonStore((s) => s.beatOffset)
-  const draftBeatOffset = useLessonStore((s) => s.draftBeatOffset)
   const loopCount = useLessonStore((s) => s.loopCount)
   const loopMode = useLessonStore((s) => s.loopMode)
   const loopSegmentIds = useLessonStore((s) => s.loopSegmentIds)
@@ -77,38 +64,9 @@ export default function LessonPage() {
   const setABLoop = useLessonStore((s) => s.setABLoop)
   const learnedSegments = useLessonStore((s) => s.learnedSegments)
   const setSegment = useLessonStore((s) => s.setSegment)
-  const setLoopSegment = useLessonStore((s) => s.setLoopSegment)
   const setLearnedSegments = useLessonStore((s) => s.setLearnedSegments)
 
   const segments = result?.segments ?? []
-
-  // 「试用示例」早返回：demo 模式下直接用注入的 demoResult 作为数据源，
-  // 跳过任何后端 fetch（离线静态部署下后端不可用）。一旦 result 已被填充
-  // （首次渲染为 null）即不再重复 set，避免死循环。
-  useEffect(() => {
-    if (demoResult && result === null) {
-      setResult(demoResult)
-      setLoading(false)
-    }
-  }, [demoResult, result])
-
-  // Resolve the local video source (object URL from the registry / IndexedDB).
-  // Falls back to '' when the file is unavailable (e.g. full reload with no
-  // persisted blob) — the UI still renders, only playback is unavailable.
-  useEffect(() => {
-    if (demoResult) {
-      setVideoSrc(DEMO_VIDEO_URL)
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      const entry = await getVideo(videoId)
-      if (!cancelled) setVideoSrc(entry ? entry.url : '')
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [videoId, demoResult])
 
   // Re-cut the phrase grid so segment boundaries follow the manual beat
   // offset (Bug: "拍点偏移后小节分段不跟随平移"). Every consumer below reads
@@ -128,19 +86,11 @@ export default function LessonPage() {
       ? segments.reduce((a, s) => a + (s.endTime - s.startTime), 0) /
         segments.reduce((a, s) => a + s.beats.length, 0)
       : 0
-  // 单节循环竞态修复：goToSegment 在「单节循环」模式下 seek 之前，先把目标小节
-  // index 写入此 ref；useBeatSync 的 tick 在下一帧最开头同步消费，强制把循环目标
-  // 切到用户点击的小节，避免播放头被旧循环目标拽回（"卡在当前小节"）。
-  // multi 模式不写该 ref（既有 onSeeked re-anchor 已处理），故无副作用。
-  const forceLoopTargetRef = useRef<number | null>(null)
   const { beatIndex, pulse, stepBeat } = useBeatSync(
     videoRef,
     offsetSegments,
     loopSegment,
-    // 偏移预览：offsetSegments 已按「已应用」beatOffset 切好网格。这里只传入
-    // draft 与 applied 的差值，让数拍计数在拖动时实时平移预览，但不重切网格 /
-    // 不动循环落点。draft===applied 时差值为 0，计数与网格一致。
-    draftBeatOffset - beatOffset,
+    0,
     beatDuration,
     (i) => setSegment(i),
     abLoop,
@@ -150,78 +100,61 @@ export default function LessonPage() {
     // Compare-mode hides the player (display:none) but the SAME <video> keeps
     // playing side-by-side — tell the engine to stop driving loop/AB seeks.
     !compareOpen,
-    // 单节循环竞态修复：把强制循环目标 ref 传给引擎（详见 forceLoopTargetRef 注释）。
-    forceLoopTargetRef as MutableRefObject<number | null>,
   )
 
-  // Hydrate learning progress from the local course store (once the result is
-  // ready). Defined as a callback so the effect below can depend on it.
-  const hydrateProgress = useCallback(
-    (res: AnalysisResult) => {
-      if (!ready) return
-      const course = getCourse(videoId)
-      if (course) {
-        const p: LessonProgress = course.progress
-        useLessonStore.setState({
-          currentSegment: p.currentSegment,
-          playbackRate: p.playbackRate,
-          mirror: p.mirror,
-          loopSegment: p.loopSegment,
-          voiceEnabled: p.voiceEnabled,
-          beatOffset: p.beatOffset ?? 0,
-          draftBeatOffset: p.beatOffset ?? 0,
-          learnedSegments: p.learnedSegments,
-          abLoop: p.abLoop ?? null,
-        })
-      } else {
-        // 新建课程：草稿偏移重置为 0（store 默认值已是 0，这里显式同步，
-        // 避免从上一个课程的草稿值残留）。
-        useLessonStore.setState({ draftBeatOffset: 0 })
-        void saveCourse(videoId, {
-          videoName: res.videoName,
-          taskId: res.taskId,
-          result: res,
-          progress: {
-            currentSegment: 1,
-            playbackRate: 1,
-            mirror: true,
-            loopSegment: false,
-            voiceEnabled: false,
-            beatOffset: 0,
-            learnedSegments: [],
-            abLoop: null,
-            updatedAt: new Date().toISOString(),
-          },
-        })
-      }
-    },
-    [ready, getCourse, saveCourse, videoId],
-  )
-
-  // Source the analysis result: demo > in-memory local task > persisted course.
-  // No backend is contacted.
+  // Fetch result + hydrate progress from local storage.
   useEffect(() => {
-    if (demoResult) return // demo early-effect already set the result
-    const local = taskId ? getLocalResult(taskId) : null
-    if (local) {
-      setResult(local)
-      hydrateProgress(local)
-      if (local.beatLowConfidence) setLowConfOpen(true)
-      setLoading(false)
-      return
-    }
-    if (ready) {
-      const course = getCourse(videoId)
-      if (course) {
-        setResult(course.result)
-        hydrateProgress(course.result)
-        if (course.result.beatLowConfidence) setLowConfOpen(true)
-      } else {
-        setError('未找到该视频的分析结果，请重新上传')
+    if (!taskId) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await apiClient.getResult(taskId)
+        if (cancelled) return
+        setResult(res)
+        if (ready) {
+          const course = getCourse(videoId)
+          if (course) {
+            const p: LessonProgress = course.progress
+            useLessonStore.setState({
+              currentSegment: p.currentSegment,
+              playbackRate: p.playbackRate,
+              mirror: p.mirror,
+              loopSegment: p.loopSegment,
+              voiceEnabled: p.voiceEnabled,
+              beatOffset: p.beatOffset ?? 0,
+              learnedSegments: p.learnedSegments,
+              abLoop: p.abLoop ?? null,
+            })
+          } else {
+            await saveCourse(videoId, {
+              videoName: res.videoName,
+              taskId: res.taskId,
+              result: res,
+              progress: {
+                currentSegment: 1,
+                playbackRate: 1,
+                mirror: true,
+                loopSegment: false,
+                voiceEnabled: false,
+                beatOffset: 0,
+                learnedSegments: [],
+                abLoop: null,
+                updatedAt: new Date().toISOString(),
+              },
+            })
+          }
+        }
+        if (res.beatLowConfidence) setLowConfOpen(true)
+      } catch (e) {
+        if (!cancelled) setError(extractApiError(e).message)
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-      setLoading(false)
+    })()
+    return () => {
+      cancelled = true
     }
-  }, [taskId, videoId, ready, demoResult, getCourse, hydrateProgress])
+  }, [taskId, videoId, ready, getCourse, saveCourse])
 
   // Track real play/pause state for the control-bar icon. `usePlayPauseSync`
   // re-attaches its `play`/`pause` listeners when `segments` flips from `[]`
@@ -317,19 +250,6 @@ export default function LessonPage() {
     if (!seg) return
     setSegment(index)
     setRate(playbackRate)
-    // 「点哪节就循环哪节」：单节循环模式下，点击任意小节会自动开启单节循环并
-    // 把循环目标锁到点击的小节。setLoopSegment(true) 幂等（已开启则无副作用），
-    // 且会互斥清除 AB loop（store 内保证）。
-    // 写入 forceLoopTargetRef 的时机必须在 seek 之前：让 useBeatSync 的 tick 在
-    // 下一帧最早时机把循环目标强制切到点击的小节，消除竞态——否则旧目标的
-    // padded loopEnd（含 ±1 拍缓冲）可能落在新小节起点之后，tick 误判回跳、把
-    // 播放头拽回旧小节（"卡在当前小节"）。该 ref 仅 single 模式被消费。
-    // multi 模式维持既有「仅跳转」行为：不自动开启单节循环、也不写该 ref
-    // （其循环切换由 onSeeked re-anchor 处理）。
-    if (loopMode === 'single') {
-      setLoopSegment(true)
-      forceLoopTargetRef.current = index
-    }
     seek(seg.startTime)
     play()
   }
@@ -395,19 +315,15 @@ export default function LessonPage() {
 
   const handleRecompute = async (mode: RecomputeMode) => {
     if (!taskId) return
-    if (taskId === 'demo') {
-      setSnack('示例模式：重新计算需上传真实视频')
-      return
-    }
     try {
       const req: { mode: RecomputeMode; firstBeatTime?: number } = { mode }
       if (mode === 'manual_first_beat') req.firstBeatTime = parseFloat(firstBeat)
-      const res = await recomputeLocalTask(taskId, req)
+      const res = await apiClient.recompute(taskId, req)
       setResult(res)
       setLowConfOpen(false)
       setSnack('已重新生成分段')
     } catch (e) {
-      setError(e instanceof Error ? e.message : '重新计算失败')
+      setError(extractApiError(e).message)
     }
   }
 
@@ -417,17 +333,13 @@ export default function LessonPage() {
   // by the card from the regular analysis result, independent of beatLowConfidence.
   const handleApplyBpm = async (bpm: number) => {
     if (!taskId) return
-    if (taskId === 'demo') {
-      setSnack('示例模式：重新计算需上传真实视频')
-      return
-    }
     setRecomputing(true)
     try {
-      const res = await recomputeLocalTask(taskId, { mode: 'fixedBpm', bpm })
+      const res = await apiClient.recompute(taskId, { mode: 'fixedBpm', bpm })
       setResult(res)
       setSnack(`已用 BPM ${bpm} 重新生成分段`)
     } catch (e) {
-      setError(e instanceof Error ? e.message : '重新计算失败')
+      setError(extractApiError(e).message)
     } finally {
       setRecomputing(false)
     }
@@ -453,6 +365,7 @@ export default function LessonPage() {
   if (!result) return null
 
   const total = offsetSegments.length
+  const videoSrc = `${apiClient.BASE}/video/${taskId}`
 
   return (
     <Box sx={{ minHeight: '100vh', pb: 6 }}>
@@ -494,9 +407,8 @@ export default function LessonPage() {
             */}
             <Box sx={{ display: compareOpen ? 'none' : 'block' }}>
               <VideoPlayer
-                src={videoSrc ?? ''}
+                src={videoSrc}
                 mirror={mirror}
-                beatMirror={beatMirror}
                 videoRef={videoRef}
                 beatIndex={beatIndex}
                 pulse={pulse}
@@ -513,7 +425,7 @@ export default function LessonPage() {
                 open={compareOpen}
                 onClose={() => setCompareOpen(false)}
                 teacherVideoRef={videoRef}
-                src={videoSrc ?? ''}
+                src={videoSrc}
                 segment={resolveCompareSegment(offsetSegments, currentSegment)}
                 segmentIndex={currentSegment}
                 mirror={mirror}

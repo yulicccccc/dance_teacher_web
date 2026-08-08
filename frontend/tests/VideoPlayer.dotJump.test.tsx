@@ -39,7 +39,6 @@ function setup(opts: { segments: Segment[] }) {
       <VideoPlayer
         src="dummy.mp4"
         mirror={false}
-        beatMirror={false}
         videoRef={videoRef}
         beatIndex={1}
         pulse={false}
@@ -111,7 +110,6 @@ describe('VideoPlayer dot → segment jump (end-to-end, Plan A)', () => {
         <VideoPlayer
           src="dummy.mp4"
           mirror={false}
-          beatMirror={false}
           videoRef={videoRef}
           beatIndex={1}
           pulse={false}

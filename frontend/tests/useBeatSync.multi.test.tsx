@@ -163,36 +163,6 @@ describe('useBeatSync — multi-segment loop (Part 2)', () => {
     container.remove()
   })
 
-  it('merges contiguous selected segments into one padded block', () => {
-    // Selecting [3, 4] should form a single loop block [8,16) padded to
-    // [7.5, 16.5]. The playhead loops within this block and never jumps to
-    // seg4's start (11.5) as if the two segments were separate.
-    const { video, timeLog, root, container } = setup({
-      segments: makeSegments(),
-      loop: true,
-      offset: 0,
-      beatDuration: 0.5,
-      loopMode: 'multi',
-      loopSegmentIds: [3, 4],
-    })
-    act(() => {
-      video.currentTime = 9.0 // inside seg3
-      video.dispatchEvent(new Event('seeked'))
-    })
-    step()
-
-    const loopBacks: number[] = []
-    drive(video, timeLog, 9.0, 4000, 0.01, (x) => loopBacks.push(x))
-    expect(loopBacks.length).toBeGreaterThan(0)
-    // Every seek target should be the merged block's padded start (7.5),
-    // never the interior boundary at seg4.start (12) or its padded start.
-    expect(loopBacks.every((x) => Math.abs(x - 7.5) < 1e-3)).toBe(true)
-    expect(loopBacks.some((x) => Math.abs(x - 11.5) < 1e-3)).toBe(false)
-
-    root.unmount()
-    container.remove()
-  })
-
   it('empty multi selection degrades to single-segment loop', () => {
     // loopMode 'multi' but no segments ticked -> behaves like single: loops the
     // segment the playhead is in (seg2 -> padded start 3.5), NOT 7.5/0.
@@ -253,56 +223,6 @@ describe('useBeatSync — multi-segment loop (Part 2)', () => {
     expect(
       timeLog.some((x) => Math.abs(x - 7.5) < 1e-3 || Math.abs(x - 0) < 1e-3),
     ).toBe(false)
-    root.unmount()
-    container.remove()
-  })
-
-  it('switching multi to single starts a fresh loop on the playhead segment', () => {
-    const segments = makeSegments()
-    const { videoRef, video, timeLog, root, container } = setup({
-      segments,
-      loop: true,
-      offset: 0,
-      beatDuration: 0.5,
-      loopMode: 'multi',
-      loopSegmentIds: [1, 3],
-    })
-    act(() => {
-      video.currentTime = 1
-      video.dispatchEvent(new Event('seeked'))
-    })
-    step()
-
-    // Finish the first selected block so multi-loop moves the playhead to seg3.
-    act(() => {
-      video.currentTime = 4.51
-    })
-    timeLog.length = 0
-    step()
-    expect(video.currentTime).toBeCloseTo(7.5)
-
-    // Switch modes without a seeked event. Single-loop must re-lock to seg3,
-    // not retain multi-loop's old seg1 target.
-    act(() => {
-      video.currentTime = 9
-      root.render(
-        <Harness
-          videoRef={videoRef}
-          segments={segments}
-          loop={true}
-          offset={0}
-          beatDuration={0.5}
-          loopMode="single"
-          loopSegmentIds={[1, 3]}
-        />,
-      )
-    })
-
-    const loopBacks: number[] = []
-    drive(video, timeLog, 9, 1000, 0.01, (x) => loopBacks.push(x))
-    expect(loopBacks.some((x) => Math.abs(x - 7.5) < 1e-3)).toBe(true)
-    expect(loopBacks.some((x) => Math.abs(x) < 1e-3)).toBe(false)
-
     root.unmount()
     container.remove()
   })
