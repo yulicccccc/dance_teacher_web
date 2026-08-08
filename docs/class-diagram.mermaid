@@ -1,85 +1,211 @@
 classDiagram
+    %% ===== 数据契约（🔒 禁止改动 src/types/api.ts） =====
     class AnalysisResult {
-        +str taskId
-        +str videoName
-        +float bpm
-        +float confidence
-        +float duration
-        +str createdAt
+        +string taskId
+        +string videoName
+        +number bpm
+        +number confidence
+        +number duration
+        +string createdAt
         +Segment[] segments
+        +boolean beatLowConfidence
     }
     class Segment {
-        +int index
-        +float startTime
-        +float endTime
-        +str type
-        +float[] beats
+        +number index
+        +number startTime
+        +number endTime
+        +string type
+        +number[] beats
     }
-    class AnalysisTask {
-        +str taskId
-        +str status
-        +int progress
+    class TaskStatus {
+        +string taskId
+        +TaskStatusValue status
+        +number progress
         +AnalysisResult result
-        +str error
+        +string error
     }
-    class TaskManager {
-        +create_task(file_or_url) str
-        +get_status(taskId) AnalysisTask
-        +retry(taskId) void
-        -_run_pipeline(taskId) void
+    class RecomputeRequest {
+        +RecomputeMode mode
+        +number firstBeatTime
+        +number bpm
     }
-    class AudioExtractor {
-        +extract(video_path) str
+    class ApiError {
+        +string code
+        +string message
+        +null data
     }
-    class BeatDetector {
-        +detect(wav_path) tuple
+    AnalysisResult "1" *-- "many" Segment : contains
+
+    %% ===== 本地新增类型（src/types/local.ts） =====
+    class DecodedAudio {
+        +Float32Array pcm
+        +number sampleRate
+        +number duration
+    }
+    class RawTrackResult {
+        +number[]|null rawBeats
+        +number tempo
+        +number periodSeed
+    }
+    class DetectResult {
+        +number bpm
+        +number confidence
+        +number[] beatTimes
+        +number duration
+        +boolean usedGrid
+        +('aubio'|'grid-only') engine
+    }
+    class LocalTask {
+        +TaskStatus status
+        +string videoId
+        +string videoName
+        +AnalysisStage stage
+        +string stageDetail
+        +('aubio'|'grid-only'|null) engine
+        +boolean cancelable
+    }
+    LocalTask --|> TaskStatus : extends
+
+    %% ===== L2 检测器（适配器，可插拔） =====
+    class RawBeatDetector {
+        <<interface>>
+        +('aubio'|'grid-only') name
+        +track(pcm, sr, envTrack, onProgress) Promise~RawTrackResult~
+    }
+    class GridOnlyDetector {
+        +name = 'grid-only'
+        +track(...) Promise~RawTrackResult~
+    }
+    class AubioDetector {
+        +name = 'aubio'
+        +track(...) Promise~RawTrackResult~
+    }
+    GridOnlyDetector ..|> RawBeatDetector
+    AubioDetector ..|> RawBeatDetector
+
+    %% ===== L1 前端特征 + L3 精调（纯 TS 1:1 移植） =====
+    class AudioDsp {
+        +onsetEnvelope(pcm,sr,hop) Float32Array
+        +lowBandEnvelope(pcm,sr,hop) Float32Array
+        +onsetPeaks(env,sr,hop) number[]
+        +tempoSeed(env,sr) number
+    }
+    class Refiner {
+        +refineBeats(envTrack,envFine,envLow,raw) DetectResult
+    }
+    class GridFit { +lsqPeriodPhase() +combSearch() +fitUniformGrid() +gridScore() }
+    class Octave { +resolveOctave() +resolveOctaveBeats() }
+    class FastRecovery { +recoverFastPeriod() +recoverFastBeats() }
+    class Confidence { +confidenceFromIntervals() +gridPathConfidence() +effectiveTempo() }
+
+    %% ===== 编排入口 =====
+    class BeatDetect {
+        +detectBeats(pcm,sr,opts) Promise~DetectResult~
     }
     class Segmenter {
-        +aggregate(beat_times, duration) Segment[]
+        +segmentBeats(beatTimes,duration,bps) Segment[]
+        +generateFixedBeats(duration,bpm) number[]
+        +generateFromFirstBeat(t,bpm,duration) number[]
     }
-    class ApiClient {
-        +upload(file_or_url) TaskStatus
-        +poll(taskId) TaskStatus
-        +getResult(taskId) AnalysisResult
+    class RecomputeLocal {
+        +recomputeLocal(req,ctx) Promise~{beatTimes,bpm,confidence}~
     }
-    class LocalProgressStore {
-        +save(videoId, data) void
-        +load(videoId) ProgressData
-        +markLearned(videoId, seg) void
-    }
-    class LessonStore {
-        +int currentSegment
-        +float playbackRate
-        +bool mirror
-        +bool loopSegment
-        +setSegment(i) void
-    }
-    class UseBeatSync {
-        +start(video) void
-        +int beatIndex
-        +onPulse(cb) void
-    }
-    class VideoPlayer {
-        +play() void
-        +setRate(r) void
-        +seek(t) void
-        +setMirror(b) void
-    }
-    class BeatOverlay {
-        +render(beatIndex) void
-        +pulse() void
+    class BuildResult {
+        +buildResult(a) AnalysisResult
     }
 
-    AnalysisResult "1" *-- "many" Segment : contains
-    TaskManager "1" *-- "many" AnalysisTask : manages
-    TaskManager ..> AudioExtractor : uses
-    TaskManager ..> BeatDetector : uses
-    TaskManager ..> Segmenter : uses
-    BeatDetector ..> Segmenter : produces beats
-    AudioExtractor ..> BeatDetector : wav
-    ApiClient ..> AnalysisResult : fetches
-    LocalProgressStore ..> AnalysisResult : caches
-    LessonStore ..> AnalysisResult : consumes
-    UseBeatSync ..> VideoPlayer : reads currentTime
-    UseBeatSync ..> BeatOverlay : triggers pulse
-    LessonStore ..> VideoPlayer : controls
+    %% ===== Worker 层 =====
+    class BeatWorker {
+        +onmessage(ANALYZE|RECOMPUTE|CANCEL|RELEASE)
+        -pcmCache: Map~taskId,Float32Array~
+    }
+    class BeatWorkerClient {
+        +analyze(pcm,...) Promise~DetectResult~
+        +recompute(taskId,req) Promise~AnalysisResult~
+        +cancel(id) +release(taskId)
+    }
+    class Protocol {
+        <<types>>
+        +ToWorker / FromWorker
+    }
+    BeatWorker ..> Protocol : uses
+    BeatWorkerClient ..> Protocol : uses
+
+    %% ===== 编排 / 存储 / 工具 =====
+    class LocalAnalysis {
+        +startAnalysis(file) Promise~{taskId,status}~
+        +getStatus(taskId) TaskStatus
+        +getResult(taskId) Promise~AnalysisResult~
+        +recompute(taskId,req) Promise~AnalysisResult~
+        +cancel(taskId) +release(taskId)
+    }
+    class AnalysisStore {
+        -tasks: Record~taskId,LocalTask~
+        +set(taskId, patch)
+        +subscribe(cb)
+    }
+    class VideoRegistry {
+        +computeVideoId(file) string
+        +registerObjectUrl(vid,url)
+        +getObjectUrl(vid) string|null
+        +revokeObjectUrl(vid)
+    }
+    class ErrorCodes {
+        +toApiError(e) ApiError
+    }
+    class UseLocalAnalysis {
+        +useLocalAnalysis(taskId) {status,error,loading,retry,cancel,stop}
+    }
+    class UseLocalProgress {
+        <<existing, locked>>
+        +getCourse(videoId) {result,progress}
+        +saveCourse(videoId,data)
+    }
+
+    %% ===== UI =====
+    class UploadPage
+    class Uploader
+    class AnalysisPage
+    class LessonPage
+    class ReselectVideoPanel
+    class DetectFallbackPanel
+    class EngineLoadingHint
+
+    %% ===== 关系 =====
+    BeatDetect --> RawBeatDetector : 可插拔 L2
+    BeatDetect --> Refiner
+    BeatDetect --> Segmenter
+    Refiner --> AudioDsp
+    Refiner --> GridFit
+    Refiner --> Octave
+    Refiner --> FastRecovery
+    Refiner --> Confidence
+    BuildResult ..> AnalysisResult : 构造
+    Segmenter ..> Segment : 产出
+
+    BeatWorker --> BeatDetect
+    BeatWorker --> Segmenter
+    BeatWorker --> BuildResult
+    BeatWorkerClient --> BeatWorker : postMessage
+    BeatWorkerClient --> DecodedAudio : transfer
+
+    LocalAnalysis --> BeatWorkerClient
+    LocalAnalysis --> AnalysisStore
+    LocalAnalysis --> VideoRegistry
+    LocalAnalysis --> BuildResult
+    LocalAnalysis --> RecomputeLocal
+    LocalAnalysis --> Segmenter
+    AnalysisStore --> LocalTask
+    VideoRegistry ..> DecodedAudio : computeVideoId
+
+    UploadPage --> LocalAnalysis
+    UploadPage --> VideoRegistry
+    Uploader --> VideoRegistry : computeVideoId
+    AnalysisPage --> UseLocalAnalysis
+    UseLocalAnalysis --> AnalysisStore
+    LessonPage --> UseLocalProgress
+    LessonPage --> VideoRegistry
+    LessonPage ..> AnalysisResult : 消费
+    ReselectVideoPanel --> VideoRegistry
+    DetectFallbackPanel --> LocalAnalysis : recompute fixed120/manual
+    EngineLoadingHint ..> BeatWorker : engine_loading 阶段

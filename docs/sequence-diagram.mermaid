@@ -1,44 +1,123 @@
-%% ① 上传 → beat 检测/分段 → 前端轮询 → 教学页
+%% ① 选型 → 解码 → Worker 检测 → 切分 → 存储 → 教学（纯浏览器，无后端）
 sequenceDiagram
     actor U as 用户
     participant UP as UploadPage
-    participant C as ApiClient
-    participant API as FastAPI
-    participant TM as TaskManager
-    participant AE as AudioExtractor
-    participant BD as BeatDetector
-    participant SG as Segmenter
+    participant Upl as Uploader
+    participant VR as VideoRegistry
+    participant LA as localAnalysis
+    participant DC as decodeAudio(主线程)
+    participant WC as beatWorkerClient
+    participant WK as beat.worker
+    participant BD as detectBeats
+    participant SG as segmentBeats
+    participant BR as buildResult
+    participant ST as analysisStore
     participant AP as AnalysisPage
     participant LP as LessonPage
 
-    U->>UP: 选择视频 / 粘贴链接
-    UP->>C: upload(file/url)
-    C->>API: POST /api/v1/upload
-    API->>TM: create_task()
-    TM-->>API: {taskId, status:queued}
-    API-->>C: {taskId}
-    C-->>UP: 跳转 AnalysisPage(taskId)
+    U->>Upl: 选择文件
+    Upl->>VR: computeVideoId(file)
+    VR-->>Upl: videoId
+    Upl-->>UP: onSelected(file, videoId)
+    UP->>LA: startAnalysis(file)
+    LA->>VR: registerObjectUrl(videoId, createObjectURL(file))
+    LA->>ST: tasks[taskId]={queued,0}
+    LA-->>UP: {taskId}  (非阻塞, 复刻 202)
+    UP->>AP: navigate('/analyze/:taskId')
 
-    TM->>AE: extract(video) [后台异步]
-    AE-->>TM: wav_path (status=extracting)
-    TM->>BD: detect(wav) (status=beat_detecting)
-    BD-->>TM: bpm, confidence, beat_times
-    TM->>SG: aggregate(beat_times) (status=segmenting)
-    SG-->>TM: segments[]
-    TM-->>TM: result = AnalysisResult (status=done)
+    AP->>ST: subscribe(taskId)
+    LA->>DC: decodeAudio(file)
+    DC-->>ST: extracting 10→35
+    DC-->>WC: DecodedAudio(pcm 经 transferable)
+    WC->>WK: ANALYZE{pcm, taskId}
+    WK-->>ST: beat_detecting 40→75 (engine_loading/onset/raw/grid)
+    WK->>BD: detectBeats(pcm, sr)
+    BD-->>WK: DetectResult{bpm,beatTimes}
+    WK->>SG: segmentBeats(beatTimes, duration)
+    SG-->>WK: Segment[]
+    WK->>BR: buildResult(...)
+    BR-->>WK: AnalysisResult
+    WK-->>ST: done 100 (result)
+    ST-->>AP: status='done'
+    AP->>LP: navigate('/lesson/:taskId', {videoId})
 
-    AP->>C: poll(taskId) [每 ~1s]
-    C->>API: GET /api/v1/analysis/{taskId}
-    API-->>C: {status, progress, result?}
-    C-->>AP: 渲染四步进度
-    Note over AP: status=done 自动跳转
-    AP->>LP: 进入 LessonPage(taskId)
-    LP->>C: getResult(taskId)
-    C->>API: GET /api/v1/analysis/{taskId}/result
-    API-->>C: AnalysisResult
-    C-->>LP: 渲染 SegmentList / VideoPlayer / BeatOverlay
+    LP->>VR: getObjectUrl(videoId)
+    VR-->>LP: objectUrl (同会话)
+    LP->>ST: getResult(taskId) → AnalysisResult
+    LP->>LP: resegmentSegments / findBeatAt / useBeatSync (全不变)
 
-%% ② 播放时 currentTime 驱动节拍叠加（运行时，rAF 驱动）
+%% ② recompute 四模式（本地等价，复刻 TaskManager.recompute）
+sequenceDiagram
+    participant UI as LessonPage/Panel
+    participant LA as localAnalysis
+    participant RC as recomputeLocal
+    participant SG as segmentBeats
+    participant BR as buildResult
+    participant WK as beat.worker
+
+    Note over UI,LA: 四模式统一收尾: segments=aggregate, beatLowConfidence=false, done/100
+
+    alt fixed120
+        UI->>LA: recompute(taskId,{mode:'fixed120'})
+        LA->>RC: generateFixedBeats(duration,120)
+        RC-->>LA: beats; bpm=120, confidence=1.0
+    else fixedBpm
+        UI->>LA: recompute(taskId,{mode:'fixedBpm',bpm})
+        LA->>RC: 校验 40–300 否则 BPM_OUT_OF_RANGE
+        RC-->>LA: generateFixedBeats(duration,bpm); confidence=1.0
+    else manual_first_beat
+        UI->>LA: recompute(taskId,{mode:'manual_first_beat',firstBeatTime})
+        LA->>RC: generateFromFirstBeat(first, currentBpm||120, duration)
+        RC-->>LA: beats; bpm 不变
+    else auto
+        UI->>LA: recompute(taskId,{mode:'auto'})
+        LA->>WK: RECOMPUTE{taskId} (取缓存 PCM)
+        WK-->>LA: DetectResult (新 bpm/confidence)
+        LA->>RC: beats=result.beatTimes
+    end
+    LA->>SG: segmentBeats(beats, duration)
+    SG-->>LA: Segment[]
+    LA->>BR: buildResult(...)
+    BR-->>UI: AnalysisResult(done,100)
+
+%% ③ 跨会话恢复：结果 + 视频源三级回退
+sequenceDiagram
+    participant LP as LessonPage
+    participant ST as analysisStore
+    participant LP2 as useLocalProgress
+    participant VR as VideoRegistry
+    participant RP as ReselectVideoPanel
+
+    LP->>LP: 取 result
+    alt demoResult
+        LP-->>LP: Demo 结果 (原样保留)
+    else 同会话
+        LP->>ST: tasks[taskId].result
+        ST-->>LP: AnalysisResult
+    else 跨会话
+        LP->>LP2: getCourse(videoId).result
+        LP2-->>LP: AnalysisResult (IndexedDB)
+    else 无
+        LP-->>LP: 错误页『课程数据已丢失，请重新选择视频』
+    end
+
+    LP->>LP: 取 videoSrc
+    alt Demo
+        LP-->>LP: DEMO_VIDEO_URL
+    else 同会话
+        LP->>VR: getObjectUrl(videoId)
+        VR-->>LP: objectUrl
+    else 失效
+        LP->>RP: 渲染重选面板 (不清进度)
+        RP->>VR: computeVideoId(newFile) === videoId ?
+        alt 一致
+            VR-->>RP: registerObjectUrl → 原地继续(已学小节/beatOffset 保留)
+        else 不一致
+            RP-->>LP: 二次确认『仍使用』
+        end
+    end
+
+%% ④ 播放时 currentTime 驱动节拍叠加（运行时，rAF 驱动，与迁移无关）
 sequenceDiagram
     participant V as VideoPlayer(video)
     participant H as useBeatSync(rAF)

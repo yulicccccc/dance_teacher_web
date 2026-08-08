@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { useLessonStore } from '../src/store/lessonStore'
 
 describe('lessonStore (P0-10 learned marking + currentSegment recovery)', () => {
-  it('has correct defaults (mirror on, segment 1)', () => {
+  it('has correct defaults (mirror on, beatMirror on, segment 1)', () => {
     const s = useLessonStore.getState()
     expect(s.mirror).toBe(true)
+    expect(s.beatMirror).toBe(true)
     expect(s.currentSegment).toBe(1)
     expect(s.loopSegment).toBe(false)
     expect(s.voiceEnabled).toBe(false)
@@ -38,14 +39,26 @@ describe('lessonStore (P0-10 learned marking + currentSegment recovery)', () => 
     useLessonStore.getState().reset()
   })
 
-  it('reset restores defaults', () => {
+  it('setBeatMirror toggles the overlay mirror independently', () => {
+    useLessonStore.getState().setBeatMirror(false)
+    expect(useLessonStore.getState().beatMirror).toBe(false)
+    // the video mirror is unaffected by the overlay mirror
+    expect(useLessonStore.getState().mirror).toBe(true)
+    useLessonStore.getState().setBeatMirror(true)
+    expect(useLessonStore.getState().beatMirror).toBe(true)
+    useLessonStore.getState().reset()
+  })
+
+  it('reset restores defaults (incl. beatMirror)', () => {
     useLessonStore.getState().setSegment(5)
     useLessonStore.getState().setMirror(false)
+    useLessonStore.getState().setBeatMirror(false)
     useLessonStore.getState().setLearnedSegments([1, 2])
     useLessonStore.getState().reset()
     const s = useLessonStore.getState()
     expect(s.currentSegment).toBe(1)
     expect(s.mirror).toBe(true)
+    expect(s.beatMirror).toBe(true)
     expect(s.learnedSegments).toEqual([])
   })
 })

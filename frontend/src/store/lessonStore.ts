@@ -8,9 +8,8 @@ import type { ABLoop } from '../types/api'
  */
 /**
  * Loop behaviour: `single` loops the segment the playhead is in (padded by one
- * beat each side); `multi` loops only the subset of segments the user ticked
- * in the LoopPanel, each also padded, cycling through them and wrapping the
- * last back to the first.
+ * beat each side); `multi` merges contiguous ticks into one loop block, pads
+ * the block by one beat, and cycles through non-contiguous blocks.
  */
 export type LoopMode = 'single' | 'multi'
 
@@ -18,10 +17,16 @@ export interface LessonState {
   currentSegment: number
   playbackRate: number
   mirror: boolean
+  /** Mirror ONLY the beat overlay (count/dots), independent of the video mirror. */
+  beatMirror: boolean
   loopSegment: boolean
   abLoop: ABLoop | null
   voiceEnabled: boolean
   beatOffset: number // manual beat-grid offset in BEATS (display only), default 0
+  // Draft beat offset while the slider is being dragged. The slider only mutates
+  // this value; the grid (`offsetSegments`) keeps using the *applied* `beatOffset`,
+  // so looping stays locked to the stable old grid until the user confirms.
+  draftBeatOffset: number
   loopCount: number | null // loop repetition limit; null = infinite
   learnedSegments: number[]
   /** Which loop flavour is active when looping is on. */
@@ -31,10 +36,13 @@ export interface LessonState {
   setSegment: (i: number) => void
   setPlaybackRate: (r: number) => void
   setMirror: (b: boolean) => void
+  setBeatMirror: (b: boolean) => void
   setLoopSegment: (b: boolean) => void
   setABLoop: (v: ABLoop | null) => void
   setVoiceEnabled: (b: boolean) => void
   setBeatOffset: (n: number) => void
+  /** Set only the draft offset (slider drag); does NOT re-cut the grid. */
+  setDraftBeatOffset: (n: number) => void
   setLoopCount: (n: number | null) => void
   toggleLearned: (i: number) => void
   setLearnedSegments: (arr: number[]) => void
@@ -48,10 +56,12 @@ export const useLessonStore = create<LessonState>((set) => ({
   currentSegment: 1,
   playbackRate: 1,
   mirror: true,
+  beatMirror: true,
   loopSegment: false,
   abLoop: null,
   voiceEnabled: false,
   beatOffset: 0,
+  draftBeatOffset: 0,
   loopCount: null,
   learnedSegments: [],
   loopMode: 'single',
@@ -60,6 +70,10 @@ export const useLessonStore = create<LessonState>((set) => ({
   setSegment: (i) => set({ currentSegment: i }),
   setPlaybackRate: (r) => set({ playbackRate: r }),
   setMirror: (b) => set({ mirror: b }),
+  // Beat overlay mirror is INDEPENDENT of the video mirror: it only flips the
+  // count/dot overlay (BeatOverlay), not the video frame. Defaults to `true`
+  // so the initial look matches the old single-switch behaviour (both flipped).
+  setBeatMirror: (b) => set({ beatMirror: b }),
   // Enabling the single-segment loop clears any custom A→B loop: the two loop
   // modes are mutually exclusive (AB is beat-anchored, single-seg is phrase-
   // anchored) and running both would fight over the playhead.
@@ -70,7 +84,13 @@ export const useLessonStore = create<LessonState>((set) => ({
   setABLoop: (v) =>
     set(v && v.enabled ? { abLoop: v, loopSegment: false } : { abLoop: v }),
   setVoiceEnabled: (b) => set({ voiceEnabled: b }),
-  setBeatOffset: (n) => set({ beatOffset: n }),
+  // Confirming the offset applies it to the grid AND syncs the draft so the
+  // slider reads the same value as the grid until the next drag begins.
+  setBeatOffset: (n) => set({ beatOffset: n, draftBeatOffset: n }),
+  // The slider only mutates the draft; the grid (`offsetSegments`) keeps using
+  // the *applied* `beatOffset`, so looping stays locked to the stable old grid
+  // until the user confirms (setBeatOffset).
+  setDraftBeatOffset: (n) => set({ draftBeatOffset: n }),
   setLoopCount: (n) => set({ loopCount: n }),
   toggleLearned: (i) =>
     set((s) => ({
@@ -83,10 +103,12 @@ export const useLessonStore = create<LessonState>((set) => ({
       currentSegment: 1,
       playbackRate: 1,
       mirror: true,
+      beatMirror: true,
       loopSegment: false,
       abLoop: null,
       voiceEnabled: false,
       beatOffset: 0,
+      draftBeatOffset: 0,
       loopCount: null,
       learnedSegments: [],
       loopMode: 'single',

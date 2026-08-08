@@ -13,9 +13,10 @@ interface Props {
  *
  *  - `single`  → loop the segment the playhead is currently in (classic
  *    behaviour, padded by one beat each side; see `useBeatSync`).
- *  - `multi`   → tick one or more segments; `useBeatSync` then cycles through
- *    the selected set (each padded), wrapping the last back to the first. An
- *    empty selection degrades to `single` inside the engine.
+ *  - `multi`   → tick one or more segments; contiguous ticks merge into one loop
+ *    block, padded by one beat on each side. Non-contiguous ticks form separate
+ *    blocks that cycle in order. An empty selection degrades to `single` inside
+ *    the engine.
  *
  * All state lives in `useLessonStore` (`loopMode`, `loopSegmentIds`); this
  * component is a thin, controlled view over it.

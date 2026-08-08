@@ -10,7 +10,17 @@ import os
 # backend/  (this file lives in backend/app/core/config.py)
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-DATA_DIR = os.path.join(BACKEND_DIR, "data")
+# Runtime data root. Override with the DANCE_DATA_DIR env var to point the whole
+# app at a different location — this is what the test suite uses to redirect
+# every on-disk write into a throw-away temp dir.
+#
+# It MUST be an env var (rather than a fixture that monkeypatches these names):
+# other modules bind these constants at import time via `from ..core.config
+# import WAV_DIR`, `TaskManager.__init__` captures TASKS_DIR as a *default
+# argument* (evaluated at def-time), and `task_manager` is instantiated as a
+# module-level singleton that reads the directory while being imported. Patching
+# after the fact cannot reach any of those; being born correct does.
+DATA_DIR = os.getenv("DANCE_DATA_DIR") or os.path.join(BACKEND_DIR, "data")
 TASKS_DIR = os.path.join(DATA_DIR, "tasks")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 WAV_DIR = os.path.join(DATA_DIR, "wav")

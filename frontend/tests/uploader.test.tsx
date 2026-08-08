@@ -1,154 +1,63 @@
-// Regression tests for the Uploader component's cold-start timeout UX:
-//  - both upload branches POST with timeout 300000
-//  - a timeout/network error shows a friendly retry message and KEEPS the file
-//  - a normal backend error shows the backend's Chinese message (no friendly copy)
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+// Uploader (zero-server build): selecting a valid video and clicking 开始分析
+// invokes onStart with that File; a non-video file is rejected via onError and
+// never reaches onStart. No axios / network is involved.
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import Uploader from '../src/components/Uploader'
 
-const { postMock } = vi.hoisted(() => {
-  const postMock = vi.fn()
-  return { postMock }
-})
-
-vi.mock('axios', () => ({
-  default: {
-    create: () => ({
-      post: postMock,
-      get: vi.fn(),
-    }),
-  },
-}))
-
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const FRIENDLY =
-  '服务器正在启动或网络较慢，文件已保留，请稍候点击【开始分析】再试一次'
-
-function renderUploader(
-  onError: (m: string) => void,
-  onUploaded: (t: string, v: string) => void = () => {},
-) {
+function renderUploader(onStart: (f: File) => void, onError = vi.fn()) {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root: Root = createRoot(container)
   act(() => {
-    root.render(<Uploader onUploaded={onUploaded} onError={onError} />)
+    root.render(<Uploader onStart={onStart} onError={onError} />)
   })
   return { container, root }
 }
 
-function selectFile(container: HTMLElement, name = 'dance.mp4'): File {
+function selectFile(container: HTMLElement, file: File): void {
   const input = container.querySelector('input[type="file"]') as HTMLInputElement
-  const file = new File(['x'], name, { type: 'video/mp4' })
-  const files = {
-    0: file,
-    length: 1,
-    item: (i: number) => (i === 0 ? file : null),
-  }
+  const files = { 0: file, length: 1, item: (i: number) => (i === 0 ? file : null) }
   Object.defineProperty(input, 'files', { value: files, configurable: true })
   act(() => {
     input.dispatchEvent(new Event('change', { bubbles: true }))
   })
-  return file
 }
 
-describe('Uploader — cold-start timeout UX', () => {
-  beforeEach(() => {
-    postMock.mockReset()
-  })
+describe('Uploader — local-first start', () => {
   afterEach(() => {
     document.body.innerHTML = ''
   })
 
-  it('file branch POST uses a 300000ms timeout', async () => {
-    postMock.mockResolvedValue({ data: { taskId: 't', status: 'queued' } })
+  it('calls onStart with the selected video file when 开始分析 is clicked', async () => {
+    const onStart = vi.fn()
     const onError = vi.fn()
-    const { container } = renderUploader(onError)
-    selectFile(container)
+    const { container } = renderUploader(onStart, onError)
+    const file = new File(['x'], 'dance.mp4', { type: 'video/mp4' })
+    selectFile(container, file)
     const btn = container.querySelector('button') as HTMLButtonElement
     await act(async () => {
       btn.click()
     })
-    expect(postMock).toHaveBeenCalledTimes(1)
-    const [, , config] = postMock.mock.calls[0]
-    expect(config.timeout).toBe(300000)
+    expect(onStart).toHaveBeenCalledTimes(1)
+    expect(onStart).toHaveBeenCalledWith(file)
+    expect(onError).not.toHaveBeenCalled()
   })
 
-  it('url branch POST uses a 300000ms timeout', async () => {
-    postMock.mockResolvedValue({ data: { taskId: 't', status: 'queued' } })
+  it('rejects a non-video file via onError and does not call onStart', async () => {
+    const onStart = vi.fn()
     const onError = vi.fn()
-    const { container } = renderUploader(onError)
-    const urlInput = container.querySelector(
-      'input[placeholder="或粘贴视频链接（可选）"]',
-    ) as HTMLInputElement
-    const setter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      'value',
-    )!.set!
-    act(() => {
-      setter.call(urlInput, 'https://example.com/v.mp4')
-      urlInput.dispatchEvent(new Event('input', { bubbles: true }))
-    })
+    const { container } = renderUploader(onStart, onError)
+    const file = new File(['x'], 'note.txt', { type: 'text/plain' })
+    selectFile(container, file)
     const btn = container.querySelector('button') as HTMLButtonElement
     await act(async () => {
       btn.click()
     })
-    expect(postMock).toHaveBeenCalledTimes(1)
-    const [, body, config] = postMock.mock.calls[0]
-    expect(body).toEqual({ url: 'https://example.com/v.mp4' })
-    expect(config.timeout).toBe(300000)
-  })
-
-  it('shows friendly retry message and keeps the file on ECONNABORTED timeout', async () => {
-    const err: { code: string; message: string } = Object.assign(
-      new Error('timeout of 300000ms exceeded'),
-      { code: 'ECONNABORTED' },
-    )
-    postMock.mockRejectedValue(err)
-    const onError = vi.fn()
-    const onUploaded = vi.fn()
-    const { container } = renderUploader(onError, onUploaded)
-    const file = selectFile(container)
-    const btn = container.querySelector('button') as HTMLButtonElement
-    expect(btn.disabled).toBe(false)
-
-    // First attempt fails with a timeout.
-    await act(async () => {
-      btn.click()
-    })
-    expect(onError).toHaveBeenCalledWith(FRIENDLY)
-    expect(onUploaded).not.toHaveBeenCalled()
-
-    // File retained: name still shown and the button is still clickable.
-    expect(container.textContent).toContain(file.name)
-    expect(btn.disabled).toBe(false)
-
-    // Retry without re-picking the file.
-    await act(async () => {
-      btn.click()
-    })
-    expect(postMock).toHaveBeenCalledTimes(2)
-    expect(onError).toHaveBeenLastCalledWith(FRIENDLY)
-  })
-
-  it('shows backend Chinese message on a normal 400 error (no friendly copy)', async () => {
-    const err: {
-      message: string
-      response: { data: { message: string } }
-    } = Object.assign(new Error('Request failed with status code 400'), {
-      response: { data: { message: '该视频格式不支持，请上传 mp4' } },
-    })
-    postMock.mockRejectedValue(err)
-    const onError = vi.fn()
-    const { container } = renderUploader(onError)
-    selectFile(container)
-    const btn = container.querySelector('button') as HTMLButtonElement
-    await act(async () => {
-      btn.click()
-    })
-    expect(onError).toHaveBeenCalledWith('该视频格式不支持，请上传 mp4')
-    expect(onError).not.toHaveBeenCalledWith(FRIENDLY)
+    expect(onError).toHaveBeenCalled()
+    expect(onStart).not.toHaveBeenCalled()
   })
 })
