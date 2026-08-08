@@ -30,7 +30,7 @@ export default function UploadPage() {
           上传你的舞蹈视频
         </Typography>
         <Typography color="text.secondary" sx={{ mb: 4 }}>
-          上传后网站会自动按 8 拍拆成小节，像舞室老师一样一小节一小节带练。视频仅用于本地学习、不外传。
+          视频会分片上传到本站服务器做高精度节拍分析，再自动按 8 拍拆成小节；不会交给第三方。
         </Typography>
         {warming && (
           <Typography variant="caption" color="text.secondary" sx={{ mb: 1 }}>

@@ -19,6 +19,9 @@ WAV_DIR = os.path.join(DATA_DIR, "wav")
 MAX_FILE_MB = 500
 MAX_DURATION_SEC = 600  # 10 minutes
 ALLOWED_EXTENSIONS = (".mp4", ".webm", ".mov")
+# Keep each browser request comfortably below the edge/proxy size at which
+# mobile uploads were observed to reset. Large videos are assembled server-side.
+UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024
 
 # CORS: dev server runs on Vite's default port. Override via the CORS_ORIGINS
 # env var (comma-separated) when deployed, e.g. the Cloudflare Pages URL.

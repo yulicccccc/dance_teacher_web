@@ -10,7 +10,7 @@ import {
 } from '@mui/material'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 import LinkIcon from '@mui/icons-material/Link'
-import { http } from '../api/client'
+import { apiClient } from '../api/client'
 import type { UploadResponse } from '../types/api'
 
 interface Props {
@@ -52,22 +52,9 @@ export default function Uploader({ onUploaded, onError }: Props) {
     try {
       let resp: UploadResponse
       if (file) {
-        const form = new FormData()
-        form.append('file', file)
-        const { data } = await http.post<UploadResponse>('/upload', form, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-          // Extended timeout (5 min) covers cold-start wake-up + large upload.
-          timeout: 300000,
-          onUploadProgress: (e) => {
-            if (e.total) setProgress(Math.round((e.loaded / e.total) * 100))
-          },
-        })
-        resp = data
+        resp = await apiClient.upload({ file, onProgress: setProgress })
       } else if (url.trim()) {
-        const { data } = await http.post<UploadResponse>('/upload', { url: url.trim() }, {
-          timeout: 300000,
-        })
-        resp = data
+        resp = await apiClient.upload({ url: url.trim() })
       } else {
         onError('请选择本地视频或粘贴视频链接')
         setUploading(false)
@@ -127,7 +114,7 @@ export default function Uploader({ onUploaded, onError }: Props) {
           拖拽视频到此处 / 点击选择文件
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          支持 mp4 / webm / mov（≤500MB，≤10 分钟）
+          支持 mp4 / webm / mov（≤500MB，≤10 分钟，大文件自动分片）
         </Typography>
       </Paper>
 

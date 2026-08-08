@@ -48,6 +48,26 @@ class UploadResponse(BaseModel):
     status: str
 
 
+class ChunkUploadInitRequest(BaseModel):
+    filename: str
+    size: int
+
+
+class ChunkUploadInitResponse(BaseModel):
+    uploadId: str
+    chunkSize: int
+
+
+class ChunkUploadPartResponse(BaseModel):
+    uploadId: str
+    index: int
+    received: int
+
+
+class ChunkUploadCompleteRequest(BaseModel):
+    totalChunks: int
+
+
 class RecomputeRequest(BaseModel):
     """Body for the beat re-computation fallback."""
 
