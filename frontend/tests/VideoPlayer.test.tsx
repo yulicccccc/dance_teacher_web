@@ -1,6 +1,6 @@
 // Tests for VideoPlayer double-click gesture (Part 2): the play area is split
 // into LEFT/RIGHT halves by its bounding rect; right = next beat, left =
-// previous beat, and the mapping flips under mirror view.
+// previous beat, independent of video mirror view.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRef, type RefObject } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -33,6 +33,7 @@ function setup(opts: { mirror: boolean }) {
       <VideoPlayer
         src="dummy.mp4"
         mirror={opts.mirror}
+        beatMirror={opts.mirror}
         videoRef={videoRef}
         beatIndex={1}
         pulse={false}
@@ -79,17 +80,17 @@ describe('VideoPlayer double-click split-screen', () => {
     expect(stepBeat).toHaveBeenCalledWith(-1)
   })
 
-  it('mirror flips the mapping: right half -> previous beat', () => {
+  it('mirror does not change mapping: right half -> next beat', () => {
     const { box, stepBeat } = setup({ mirror: true })
-    dblClick(box, 150) // right half, but mirrored -> -1
-    expect(stepBeat).toHaveBeenCalledTimes(1)
-    expect(stepBeat).toHaveBeenCalledWith(-1)
-  })
-
-  it('mirror flips the mapping: left half -> next beat', () => {
-    const { box, stepBeat } = setup({ mirror: true })
-    dblClick(box, 50) // left half, but mirrored -> +1
+    dblClick(box, 150)
     expect(stepBeat).toHaveBeenCalledTimes(1)
     expect(stepBeat).toHaveBeenCalledWith(1)
+  })
+
+  it('mirror does not change mapping: left half -> previous beat', () => {
+    const { box, stepBeat } = setup({ mirror: true })
+    dblClick(box, 50)
+    expect(stepBeat).toHaveBeenCalledTimes(1)
+    expect(stepBeat).toHaveBeenCalledWith(-1)
   })
 })

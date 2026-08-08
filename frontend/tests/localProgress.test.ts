@@ -3,6 +3,7 @@ import {
   loadStore,
   saveStore,
   sortSegments,
+  normalizeLessonProgress,
   type CourseProgress,
   type LessonProgress,
 } from '../src/hooks/useLocalProgress'
@@ -50,8 +51,14 @@ function progress(over: Partial<LessonProgress> = {}): LessonProgress {
     currentSegment: 1,
     playbackRate: 1,
     mirror: true,
-    loopSegment: false,
+    beatMirror: true,
+    loopEnabled: false,
+    loopMode: 'single',
+    loopSegmentIds: [],
+    loopCount: null,
+    practiceSeconds: 0,
     voiceEnabled: false,
+    beatOffset: 0,
     learnedSegments: [],
     updatedAt: '2026-07-24T00:00:00Z',
     ...over,
@@ -68,6 +75,30 @@ describe('sortSegments (pure helper)', () => {
   })
 })
 
+describe('loop progress migration', () => {
+  it('migrates the legacy loopSegment switch to single-mode master loop', () => {
+    const migrated = normalizeLessonProgress({
+      currentSegment: 2,
+      playbackRate: 0.75,
+      mirror: false,
+      loopSegment: true,
+      voiceEnabled: true,
+      learnedSegments: [2],
+    })
+    expect(migrated.loopMode).toBe('single')
+    expect(migrated.loopEnabled).toBe(true)
+    expect(migrated.beatMirror).toBe(false)
+  })
+
+  it('migrates an enabled legacy AB loop into AB mode', () => {
+    const migrated = normalizeLessonProgress({
+      abLoop: { enabled: true, aTime: 2, bTime: 6, aBeat: 5, bBeat: 13 },
+    })
+    expect(migrated.loopMode).toBe('ab')
+    expect(migrated.loopEnabled).toBe(true)
+  })
+})
+
 describe('useLocalProgress persistence (P0-9)', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -76,12 +107,19 @@ describe('useLocalProgress persistence (P0-9)', () => {
   it('round-trips a small result inline through localStorage', async () => {
     const store = {
       version: 1,
-      courses: { vid1: course('vid1', smallResult(), progress({ currentSegment: 2 })) },
+      courses: {
+        vid1: course(
+          'vid1',
+          smallResult(),
+          progress({ currentSegment: 2, practiceSeconds: 65 }),
+        ),
+      },
     }
     await saveStore(store)
     const loaded = await loadStore()
     expect(loaded.courses.vid1.result).toEqual(smallResult())
     expect(loaded.courses.vid1.progress.currentSegment).toBe(2)
+    expect(loaded.courses.vid1.progress.practiceSeconds).toBe(65)
   })
 
   it('offloads a large result to IndexedDB and restores it transparently', async () => {

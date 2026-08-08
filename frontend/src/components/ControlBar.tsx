@@ -6,6 +6,8 @@ import {
   Slider,
   Stack,
   Switch,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from '@mui/material'
@@ -18,39 +20,32 @@ import FlipIcon from '@mui/icons-material/Flip'
 import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver'
 import VideocamIcon from '@mui/icons-material/Videocam'
 import VideocamOffIcon from '@mui/icons-material/VideocamOff'
-import { useLessonStore } from '../store/lessonStore'
+import { useLessonStore, type LoopMode } from '../store/lessonStore'
 import { findBeatAt } from '../utils/segmentMath'
-import LoopPanel from './LoopPanel'
+import { formatDuration } from '../utils/format'
 import type { Segment, ABLoop } from '../types/api'
 
 interface Props {
   playing: boolean
   canPrev: boolean
   canNext: boolean
+  currentSegment: number
+  currentTime: number
+  duration: number
+  onSeekTime: (time: number) => void
   onTogglePlay: () => void
   onPrev: () => void
   onNext: () => void
   onMarkLearned: () => void
   learned: boolean
-  /** Offset beat grid (already bakes in `beatOffset`), used to label A/B points. */
   segments: Segment[]
-  /** Current custom A→B loop state (null when not configured). */
-  abLoop: ABLoop | null
   onSetA: () => void
   onSetB: () => void
-  onEnableAB: () => void
-  onDisableAB: () => void
   onClearAB: () => void
-  /** Toggle the in-place split-screen comparison (teacher left / learner right). */
   onCompare: () => void
-  /** True while the split-screen comparison is showing, so the button reads as a toggle. */
   comparing?: boolean
 }
 
-/**
- * Format an A/B point as "小节X·拍Y (t.sss)" using the offset beat grid so the
- * user can see exactly which beat each loop endpoint snapped to.
- */
 function formatABPoint(
   label: string,
   ab: ABLoop | null,
@@ -58,33 +53,41 @@ function formatABPoint(
   segments: Segment[],
 ): string {
   if (!ab) return `${label}: —`
-  const t = which === 'a' ? ab.aTime : ab.bTime
-  const hit = findBeatAt(segments, t)
-  if (!hit) return `${label}: —`
-  return `${label}: 小节${hit.segIndex}·拍${hit.beatInSeg} (${t.toFixed(2)}s)`
+  const time = which === 'a' ? ab.aTime : ab.bTime
+  const hit = findBeatAt(segments, time)
+  return hit
+    ? `${label}: 小节${hit.segIndex}·拍${hit.beatInSeg} (${time.toFixed(2)}s)`
+    : `${label}: —`
 }
 
-/**
- * Bottom control bar — the "teacher actions" as one-click toggles: variable
- * playback speed (continuous slider), single-segment loop, custom A→B loop
- * (beat-anchored), mirror flip, voice count, plus phrase navigation and the
- * "next section" affordance (PRD P0-5/6/8).
- */
+function formatSegmentRanges(ids: number[]): string {
+  const sorted = [...new Set(ids)].sort((a, b) => a - b)
+  const ranges: string[] = []
+  for (let start = 0; start < sorted.length; ) {
+    let end = start
+    while (end + 1 < sorted.length && sorted[end + 1] === sorted[end] + 1) end += 1
+    ranges.push(start === end ? `${sorted[start]}` : `${sorted[start]}–${sorted[end]}`)
+    start = end + 1
+  }
+  return ranges.join('、')
+}
+
 export default function ControlBar({
   playing,
   canPrev,
   canNext,
+  currentSegment,
+  currentTime,
+  duration,
+  onSeekTime,
   onTogglePlay,
   onPrev,
   onNext,
   onMarkLearned,
   learned,
   segments,
-  abLoop,
   onSetA,
   onSetB,
-  onEnableAB,
-  onDisableAB,
   onClearAB,
   onCompare,
   comparing = false,
@@ -93,21 +96,45 @@ export default function ControlBar({
   const setPlaybackRate = useLessonStore((s) => s.setPlaybackRate)
   const mirror = useLessonStore((s) => s.mirror)
   const setMirror = useLessonStore((s) => s.setMirror)
-  const loopSegment = useLessonStore((s) => s.loopSegment)
-  const setLoopSegment = useLessonStore((s) => s.setLoopSegment)
+  const beatMirror = useLessonStore((s) => s.beatMirror)
+  const setBeatMirror = useLessonStore((s) => s.setBeatMirror)
+  const loopEnabled = useLessonStore((s) => s.loopEnabled)
+  const loopMode = useLessonStore((s) => s.loopMode)
+  const setLoopMode = useLessonStore((s) => s.setLoopMode)
+  const toggleLoopEnabled = useLessonStore((s) => s.toggleLoopEnabled)
+  const loopSegmentIds = useLessonStore((s) => s.loopSegmentIds)
+  const abLoop = useLessonStore((s) => s.abLoop)
   const voiceEnabled = useLessonStore((s) => s.voiceEnabled)
   const setVoiceEnabled = useLessonStore((s) => s.setVoiceEnabled)
   const beatOffset = useLessonStore((s) => s.beatOffset)
+  const draftBeatOffset = useLessonStore((s) => s.draftBeatOffset)
   const setBeatOffset = useLessonStore((s) => s.setBeatOffset)
+  const setDraftBeatOffset = useLessonStore((s) => s.setDraftBeatOffset)
   const loopCount = useLessonStore((s) => s.loopCount)
   const setLoopCount = useLessonStore((s) => s.setLoopCount)
 
-  // A loop with aTime >= bTime is degenerate (A not before B) -> cannot enable.
-  const abIncomplete = abLoop != null && abLoop.aTime >= abLoop.bTime
+  const validAB = abLoop != null && abLoop.aTime < abLoop.bTime
+  const canEnableLoop =
+    loopMode === 'single' ||
+    (loopMode === 'multi' && loopSegmentIds.length > 0) ||
+    (loopMode === 'ab' && validAB)
+  const disabledReason =
+    loopMode === 'multi'
+      ? '请先勾选要循环的段落（在左侧小节列表）'
+      : loopMode === 'ab'
+        ? '请先设 A、B（A 须早于 B）'
+        : ''
+  const summary = !loopEnabled
+    ? '循环已关闭'
+    : loopMode === 'single'
+      ? `循环中 · 单节（第 ${currentSegment} 节）`
+      : loopMode === 'multi'
+        ? `循环中 · 多节（第 ${formatSegmentRanges(loopSegmentIds)} 节）`
+        : `循环中 · AB（${formatABPoint('', abLoop, 'a', segments).replace(': ', '')} → ${formatABPoint('', abLoop, 'b', segments).replace(': ', '')}）`
 
   return (
     <Stack spacing={2} sx={{ mt: 2 }} alignItems="center">
-      <Stack direction="row" spacing={1} alignItems="center" justifyContent="center">
+      <Stack direction="row" spacing={1} alignItems="center">
         <IconButton onClick={onPrev} disabled={!canPrev} aria-label="上一节">
           <SkipPreviousIcon />
         </IconButton>
@@ -124,89 +151,87 @@ export default function ControlBar({
         </IconButton>
       </Stack>
 
-      <Stack
-        direction="row"
-        spacing={2}
-        alignItems="center"
-        justifyContent="center"
-        flexWrap="wrap"
-      >
-        {/* 连续变速滑条：0.25x（抠动作）~ 1.5x，复用 playbackRate / setPlaybackRate */}
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ width: '100%' }}>
+        <Typography variant="caption" sx={{ minWidth: 42 }}>
+          {formatDuration(currentTime)}
+        </Typography>
+        <Slider
+          min={0}
+          max={Math.max(duration, 0.01)}
+          step={0.01}
+          value={Math.min(currentTime, Math.max(duration, 0.01))}
+          onChange={(_, value) => onSeekTime(value as number)}
+          aria-label="视频播放进度"
+        />
+        <Typography variant="caption" sx={{ minWidth: 42, textAlign: 'right' }}>
+          {formatDuration(duration)}
+        </Typography>
+      </Stack>
+
+      <Stack direction="row" spacing={2} alignItems="center" justifyContent="center" flexWrap="wrap">
         <Stack direction="row" spacing={1} alignItems="center">
-          <Typography variant="body2" color="text.secondary">
-            速度
-          </Typography>
+          <Typography variant="body2" color="text.secondary">速度</Typography>
           <Slider
             size="small"
             min={0.25}
             max={1.5}
             step={0.05}
             value={playbackRate}
-            onChange={(_, v) => setPlaybackRate(v as number)}
+            onChange={(_, value) => setPlaybackRate(value as number)}
             valueLabelDisplay="auto"
-            valueLabelFormat={(v) => `${(v as number).toFixed(2)}x`}
+            valueLabelFormat={(value) => `${Number(value).toFixed(2)}x`}
             aria-label="播放速度"
             sx={{ width: 160 }}
           />
-          <Typography
-            variant="body2"
-            sx={{
-              whiteSpace: 'nowrap',
-              minWidth: 52,
-              textAlign: 'right',
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            {`${playbackRate.toFixed(2)}x`}
+          <Typography variant="body2" sx={{ minWidth: 52, fontVariantNumeric: 'tabular-nums' }}>
+            {playbackRate.toFixed(2)}x
           </Typography>
-          <Button
-            size="small"
-            variant={playbackRate === 1 ? 'contained' : 'outlined'}
-            onClick={() => setPlaybackRate(1)}
-            sx={{ minWidth: 40 }}
-          >
+          <Button size="small" variant={playbackRate === 1 ? 'contained' : 'outlined'} onClick={() => setPlaybackRate(1)}>
             1x
           </Button>
         </Stack>
 
-        <Tooltip title="单节循环（含前后各一拍过渡，衔接更顺）">
-          <Button
-            variant={loopSegment ? 'contained' : 'outlined'}
-            startIcon={<ReplayIcon />}
-            onClick={() => setLoopSegment(!loopSegment)}
-          >
-            单节循环
+        <Tooltip title={!canEnableLoop && !loopEnabled ? disabledReason : `${summary}；点击切换`}>
+          <span>
+            <Button
+              variant={loopEnabled ? 'contained' : 'outlined'}
+              startIcon={<ReplayIcon />}
+              onClick={toggleLoopEnabled}
+              disabled={!canEnableLoop && !loopEnabled}
+              aria-pressed={loopEnabled}
+            >
+              循环
+            </Button>
+          </span>
+        </Tooltip>
+        <ToggleButtonGroup
+          exclusive
+          size="small"
+          value={loopMode}
+          onChange={(_, value: LoopMode | null) => value && setLoopMode(value)}
+          aria-label="循环模式"
+        >
+          <ToggleButton value="single">单节</ToggleButton>
+          <ToggleButton value="multi">多节</ToggleButton>
+          <ToggleButton value="ab">AB</ToggleButton>
+        </ToggleButtonGroup>
+
+        <Tooltip title="仅翻转视频画面">
+          <Button variant={mirror ? 'contained' : 'outlined'} startIcon={<FlipIcon />} onClick={() => setMirror(!mirror)}>
+            视频镜像
           </Button>
         </Tooltip>
-        {/* 多选段落循环配置：single/multi 切换 + 段落勾选清单（空选退化为单节）。
-            始终挂载；loopMode 仅决定 useBeatSync 的循环方式，真正循环与否仍由
-            上方「单节循环」主开关（loopSegment）控制。 */}
-        <LoopPanel segments={segments} />
-        <Tooltip title="镜像翻转（默认开，模拟镜面）">
-          <Button
-            variant={mirror ? 'contained' : 'outlined'}
-            startIcon={<FlipIcon />}
-            onClick={() => setMirror(!mirror)}
-          >
-            镜像
+        <Tooltip title="独立翻转拍点提示，不影响视频画面">
+          <Button variant={beatMirror ? 'contained' : 'outlined'} onClick={() => setBeatMirror(!beatMirror)}>
+            拍点镜像
           </Button>
         </Tooltip>
         <Tooltip title="口令提示（语音数拍）">
-          <Button
-            variant={voiceEnabled ? 'contained' : 'outlined'}
-            startIcon={<RecordVoiceOverIcon />}
-            onClick={() => setVoiceEnabled(!voiceEnabled)}
-          >
+          <Button variant={voiceEnabled ? 'contained' : 'outlined'} startIcon={<RecordVoiceOverIcon />} onClick={() => setVoiceEnabled(!voiceEnabled)}>
             口令
           </Button>
         </Tooltip>
-        <Tooltip
-          title={
-            comparing
-              ? '退出对照分屏，恢复普通播放'
-              : '原地左右分屏对比（左老师 / 右自己，可录制下载；再次点击退出）'
-          }
-        >
+        <Tooltip title={comparing ? '退出对照分屏' : '左右分屏对比（左老师 / 右自己）'}>
           <Button
             variant={comparing ? 'outlined' : 'contained'}
             color="secondary"
@@ -218,16 +243,29 @@ export default function ControlBar({
         </Tooltip>
       </Stack>
 
-      {/* 循环次数限制：默认关闭 = 无限循环；开启后滑条 3–10 次。
-          对单节循环与 AB 循环都生效；到数后退出并继续播放。 */}
+      <Typography variant="caption" color={loopEnabled ? 'primary' : 'text.secondary'}>
+        {summary}
+        {!loopEnabled && loopMode === 'multi' && ` · 已选 ${loopSegmentIds.length} 节（在左侧列表勾选）`}
+      </Typography>
+
+      {loopMode === 'ab' && (
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+          <Typography variant="body2" color="text.secondary">AB 循环</Typography>
+          <Button size="small" variant="outlined" onClick={onSetA}>设 A</Button>
+          <Button size="small" variant="outlined" onClick={onSetB}>设 B</Button>
+          <Typography variant="caption">{formatABPoint('A', abLoop, 'a', segments)}</Typography>
+          <Typography variant="caption">{formatABPoint('B', abLoop, 'b', segments)}</Typography>
+          {abLoop && (
+            <Button size="small" variant="text" color="error" onClick={onClearAB}>
+              清除
+            </Button>
+          )}
+        </Stack>
+      )}
+
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
         <FormControlLabel
-          control={
-            <Switch
-              checked={loopCount != null}
-              onChange={(e) => setLoopCount(e.target.checked ? 5 : null)}
-            />
-          }
+          control={<Switch checked={loopCount != null} onChange={(event) => setLoopCount(event.target.checked ? 5 : null)} />}
           label="限制循环次数"
         />
         {loopCount != null && (
@@ -238,127 +276,43 @@ export default function ControlBar({
               max={10}
               step={1}
               value={loopCount}
-              onChange={(_, v) => setLoopCount(v as number)}
+              onChange={(_, value) => setLoopCount(value as number)}
               valueLabelDisplay="auto"
-              valueLabelFormat={(v) => `${v} 次`}
               aria-label="循环次数"
               sx={{ width: 160 }}
             />
-            <Typography
-              variant="body2"
-              sx={{
-                whiteSpace: 'nowrap',
-                minWidth: 44,
-                textAlign: 'right',
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {`${loopCount} 次`}
-            </Typography>
-            <Tooltip title="对单节循环和 AB 循环都生效；到数后退出并继续播放">
-              <Typography variant="caption" color="text.secondary">
-                到数后继续播
-              </Typography>
-            </Tooltip>
+            <Typography variant="body2">{loopCount} 次 · 到数后继续播</Typography>
           </>
         )}
       </Stack>
 
-      {/* 自定义 A→B 循环（以拍子为单位，与单节循环互斥） */}
-      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-        <Typography variant="body2" color="text.secondary">
-          AB 循环
-        </Typography>
-        <Tooltip title="以当前播放位置最近的拍点设为 A">
-          <Button size="small" variant="outlined" onClick={onSetA}>
-            设 A
-          </Button>
-        </Tooltip>
-        <Tooltip title="以当前播放位置最近的拍点设为 B">
-          <Button size="small" variant="outlined" onClick={onSetB}>
-            设 B
-          </Button>
-        </Tooltip>
-        <Typography
-          variant="caption"
-          sx={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
-        >
-          {formatABPoint('A', abLoop, 'a', segments)}
-        </Typography>
-        <Typography
-          variant="caption"
-          sx={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
-        >
-          {formatABPoint('B', abLoop, 'b', segments)}
-        </Typography>
-        {abLoop && !abLoop.enabled && (
-          <Tooltip title={abIncomplete ? '请先设 A、B（A 须早于 B）' : '启用自定义循环'}>
-            {/* span wrapper so the tooltip still shows on a disabled button */}
-            <span>
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                disabled={abIncomplete}
-                onClick={onEnableAB}
-              >
-                启用
-              </Button>
-            </span>
-          </Tooltip>
-        )}
-        {abLoop && abLoop.enabled && (
-          <Button size="small" variant="outlined" color="warning" onClick={onDisableAB}>
-            停用
-          </Button>
-        )}
-        {abLoop && (
-          <Button size="small" variant="text" color="error" onClick={onClearAB}>
-            清除
-          </Button>
-        )}
-      </Stack>
-
-      <Box sx={{ width: '100%', maxWidth: 420 }}>
-        <Stack direction="row" spacing={1.5} alignItems="center">
+      <Box sx={{ width: '100%', maxWidth: 520 }}>
+        <Stack direction="row" spacing={1} alignItems="center">
           <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
-            拍点计数偏移
+            拍点偏移
           </Typography>
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={() => setBeatOffset(beatOffset - 1)}
-            disabled={beatOffset <= -4}
-            aria-label="计数减一拍"
-          >
-            −1 拍
-          </Button>
           <Slider
             size="small"
             min={-4}
             max={4}
             step={1}
-            value={beatOffset}
-            onChange={(_, v) => setBeatOffset(v as number)}
+            value={draftBeatOffset}
+            onChange={(_, value) => setDraftBeatOffset(value as number)}
             valueLabelDisplay="auto"
-            valueLabelFormat={(v) => `${v > 0 ? '+' : ''}${v} 拍`}
-            aria-label="拍点计数偏移（拍）"
+            valueLabelFormat={(value) => `${Number(value) > 0 ? '+' : ''}${value} 拍`}
+            aria-label="拍点偏移草稿（拍）"
           />
+          <Typography variant="body2" sx={{ minWidth: 44 }}>
+            {draftBeatOffset > 0 ? '+' : ''}{draftBeatOffset} 拍
+          </Typography>
           <Button
             size="small"
-            variant="outlined"
-            onClick={() => setBeatOffset(beatOffset + 1)}
-            disabled={beatOffset >= 4}
-            aria-label="计数加一拍"
+            variant="contained"
+            disabled={draftBeatOffset === beatOffset}
+            onClick={() => setBeatOffset(draftBeatOffset)}
           >
-            +1 拍
+            重新计算拍子
           </Button>
-          <Typography
-            variant="body2"
-            sx={{ whiteSpace: 'nowrap', minWidth: 44, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
-          >
-            {`${beatOffset > 0 ? '+' : ''}${beatOffset} 拍`}
-          </Typography>
         </Stack>
       </Box>
 
@@ -366,17 +320,10 @@ export default function ControlBar({
         variant={learned ? 'outlined' : 'contained'}
         color={learned ? 'success' : 'primary'}
         onClick={onMarkLearned}
-        sx={{ alignSelf: 'center' }}
       >
         {learned ? '取消「已学会」' : '标记已学会 ✓'}
       </Button>
-      <Button
-        variant="text"
-        endIcon={<SkipNextIcon />}
-        onClick={onNext}
-        disabled={!canNext}
-        sx={{ alignSelf: 'center' }}
-      >
+      <Button variant="text" endIcon={<SkipNextIcon />} onClick={onNext} disabled={!canNext}>
         下一节 →
       </Button>
     </Stack>

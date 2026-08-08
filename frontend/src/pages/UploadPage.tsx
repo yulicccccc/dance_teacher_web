@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { AppBar, Box, Button, Container, Toolbar, Typography } from '@mui/material'
 import Uploader from '../components/Uploader'
 import { apiClient } from '../api/client'
+import { buildDemoResult } from '../demo/sampleLesson'
 
 export default function UploadPage() {
   const navigate = useNavigate()
@@ -41,6 +42,21 @@ export default function UploadPage() {
           onUploaded={(taskId, videoId) => navigate(`/analyze/${taskId}`, { state: { videoId } })}
           onError={setError}
         />
+        <Button
+          variant="outlined"
+          fullWidth
+          sx={{ mt: 2 }}
+          onClick={() =>
+            navigate('/lesson/demo', {
+              state: { demoResult: buildDemoResult(), videoId: 'demo' },
+            })
+          }
+        >
+          试用示例（无需上传）
+        </Button>
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+          内置示例拍点，可测试三种循环和全部教学交互
+        </Typography>
         {error && (
           <Typography color="error" sx={{ mt: 2 }}>
             {error}
