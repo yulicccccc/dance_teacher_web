@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="舞蹈老师 API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="舞蹈老师 API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

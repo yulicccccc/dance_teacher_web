@@ -1,0 +1,30 @@
+name: dance-teacher-local
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dance-teacher-web:local
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${DANCE_TEACHER_PORT:-8000}:8000"
+    environment:
+      NUMBA_CACHE_DIR: /var/cache/dance-teacher-numba
+    volumes:
+      - ./backend/data:/app/data
+      - numba-cache:/var/cache/dance-teacher-numba
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"
+      interval: 3s
+      timeout: 6s
+      retries: 40
+      start_period: 180s
+
+volumes:
+  numba-cache:

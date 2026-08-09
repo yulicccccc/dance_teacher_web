@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,12 @@ import pytest
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+
+# Never point test cleanup at the user's real backend/data directory. Config is
+# imported below, so setting the override here gives every module-level service
+# singleton an isolated process-scoped data root.
+_TEST_DATA_DIR = tempfile.TemporaryDirectory(prefix="dance-teacher-tests-")
+os.environ["DANCE_TEACHER_DATA_DIR"] = _TEST_DATA_DIR.name
 
 from app.core.config import TASKS_DIR, UPLOAD_DIR, WAV_DIR  # noqa: E402
 

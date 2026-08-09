@@ -14,7 +14,7 @@ import {
 } from '@mui/material'
 import apiClient, { extractApiError } from '../api/client'
 import { useVideoControls } from '../hooks/useVideoControls'
-import { useBeatSync } from '../hooks/useBeatSync'
+import { locateBeat, useBeatSync } from '../hooks/useBeatSync'
 import { usePlayPauseSync } from '../hooks/usePlayPauseSync'
 import { useLocalProgress, type LessonProgress } from '../hooks/useLocalProgress'
 import { useLessonStore } from '../store/lessonStore'
@@ -24,7 +24,7 @@ import ControlBar from '../components/ControlBar'
 import CompareMode from '../components/CompareMode'
 import ProgressHeader from '../components/ProgressHeader'
 import BeatInfoCard from '../components/BeatInfoCard'
-import { resegmentSegments, findBeatAt } from '../utils/segmentMath'
+import { estimateBeatDuration, resegmentSegments, findBeatAt } from '../utils/segmentMath'
 import { resolveCompareSegment } from '../utils/compare'
 import { pickChineseVoice } from '../utils/voice'
 import { buildDemoResult, DEMO_VIDEO_URL } from '../demo/sampleLesson'
@@ -77,11 +77,13 @@ export default function LessonPage() {
   const learnedSegments = useLessonStore((s) => s.learnedSegments)
   const setSegment = useLessonStore((s) => s.setSegment)
   const setLoopEnabled = useLessonStore((s) => s.setLoopEnabled)
+  const setBeatOffset = useLessonStore((s) => s.setBeatOffset)
   const toggleLoopSegmentId = useLessonStore((s) => s.toggleLoopSegmentId)
   const setLoopSegmentIds = useLessonStore((s) => s.setLoopSegmentIds)
   const addPracticeSeconds = useLessonStore((s) => s.addPracticeSeconds)
   const setLearnedSegments = useLessonStore((s) => s.setLearnedSegments)
   const forceLoopTargetRef = useRef<number | null>(null)
+  const wasSingleLoopActiveRef = useRef(false)
 
   const segments = result?.segments ?? []
 
@@ -94,15 +96,14 @@ export default function LessonPage() {
   // (the offset is already baked into `offsetSegments`). `segments` itself is
   // preserved untouched, so resetting the slider to 0 restores the original grid.
   const offsetSegments = useMemo(
-    () => resegmentSegments(segments, beatOffset),
-    [segments, beatOffset],
+    () => resegmentSegments(segments, beatOffset, result?.duration),
+    [segments, beatOffset, result?.duration],
   )
 
-  const beatDuration =
-    segments.length > 0
-      ? segments.reduce((a, s) => a + (s.endTime - s.startTime), 0) /
-        segments.reduce((a, s) => a + s.beats.length, 0)
-      : 0
+  // Pre-roll and tail content belong to the edge phrases but are not extra
+  // beats. Derive the beat interval from timestamps, not segment durations, so
+  // covering 0..duration cannot distort offset or padding math.
+  const beatDuration = useMemo(() => estimateBeatDuration(segments), [segments])
   const abLoopForEngine =
     loopEnabled && loopMode === 'ab' && abLoop && abLoop.aTime < abLoop.bTime
       ? { ...abLoop, enabled: true }
@@ -115,7 +116,14 @@ export default function LessonPage() {
     loopEnabled && loopMode !== 'ab',
     draftBeatOffset - beatOffset,
     beatDuration,
-    (i) => setSegment(i),
+    (i) => {
+      const state = useLessonStore.getState()
+      // The one-beat lead/trail belongs to the selected loop, but it physically
+      // sits in the neighbouring segments. Keep the selected target highlighted
+      // instead of making the UI bounce 5 -> 4 -> 5 -> 6 on every repetition.
+      if (state.loopEnabled && state.loopMode === 'single') return
+      setSegment(i)
+    },
     abLoopForEngine,
     loopCount,
     loopMode === 'multi' ? 'multi' : 'single',
@@ -125,6 +133,21 @@ export default function LessonPage() {
     !compareOpen,
     forceLoopTargetRef,
   )
+
+  // When single-loop ends (or the user switches to multi/AB), immediately hand
+  // the header/list back to the real playhead segment. This only runs on the
+  // transition out of single-loop, so it cannot disturb saved-position resume.
+  useEffect(() => {
+    const singleActive = loopEnabled && loopMode === 'single'
+    if (wasSingleLoopActiveRef.current && !singleActive) {
+      const v = videoRef.current
+      if (v) {
+        const loc = locateBeat(offsetSegments, v.currentTime, v.currentTime)
+        if (loc.activeSegment) setSegment(loc.activeSegment)
+      }
+    }
+    wasSingleLoopActiveRef.current = singleActive
+  }, [loopEnabled, loopMode, offsetSegments, setSegment, videoRef])
 
   // Fetch result + hydrate progress from local storage.
   useEffect(() => {
@@ -331,11 +354,74 @@ export default function LessonPage() {
       // previous segment before the media seeked event arrives.
       forceLoopTargetRef.current = index
       setLoopEnabled(true)
+    } else if (loopMode === 'multi') {
+      // Multi uses the same explicit-navigation channel so a decoded frame a
+      // few milliseconds before the bar line cannot anchor the previous block.
+      forceLoopTargetRef.current = index
     }
     setSegment(index)
     setRate(playbackRate)
     seek(seg.startTime)
     play()
+  }
+
+  const handleConfirmBeatOffset = (nextOffset: number) => {
+    const nextSegments = resegmentSegments(segments, nextOffset, result?.duration)
+    const videoTime = videoRef.current?.currentTime ?? 0
+    const location = locateBeat(nextSegments, videoTime, videoTime)
+    const nextSegment = location.activeSegment || 1
+    const resetMulti = loopSegmentIds.length > 0
+    const resetLearned = learnedSegments.length > 0
+
+    // The physical A/B times remain valid because the underlying beat
+    // timestamps did not move; refresh their display ordinals on the new
+    // phrase grid. Numeric multi/learned ids, however, describe the old grid
+    // and must not silently point at different movement after re-segmentation.
+    if (abLoop) {
+      const a = findBeatAt(nextSegments, abLoop.aTime)
+      const b = findBeatAt(nextSegments, abLoop.bTime)
+      setABLoop({
+        ...abLoop,
+        aBeat: a?.globalBeat ?? abLoop.aBeat,
+        bBeat: b?.globalBeat ?? abLoop.bBeat,
+      })
+    }
+    if (resetMulti) setLoopSegmentIds([])
+    if (resetLearned) setLearnedSegments([])
+    if (loopEnabled && loopMode === 'single') {
+      forceLoopTargetRef.current = nextSegment
+    }
+    setBeatOffset(nextOffset)
+    setSegment(nextSegment)
+
+    const resetNotes = [
+      resetMulti ? '多节选择' : '',
+      resetLearned ? '旧已学标记' : '',
+    ].filter(Boolean)
+    setSnack(
+      resetNotes.length > 0
+        ? `拍子与首尾小节已重算；已清除${resetNotes.join('、')}`
+        : '拍子、小节与循环边界已统一重算',
+    )
+  }
+
+  const lockSingleLoopToTime = (time: number) => {
+    if (!(loopEnabled && loopMode === 'single')) return
+    const loc = locateBeat(offsetSegments, time, time)
+    if (!loc.activeSegment) return
+    forceLoopTargetRef.current = loc.activeSegment
+    setSegment(loc.activeSegment)
+  }
+
+  const handleSeekTime = (time: number) => {
+    lockSingleLoopToTime(time)
+    seek(time)
+  }
+
+  const handleStepBeat = (dir: 1 | -1) => {
+    stepBeat(dir)
+    const v = videoRef.current
+    if (v) lockSingleLoopToTime(v.currentTime)
   }
 
   const handlePrev = () => {
@@ -481,6 +567,8 @@ export default function LessonPage() {
                 setLoopSegmentIds(offsetSegments.map((segment) => segment.index))
               }
               onClearSelection={() => setLoopSegmentIds([])}
+              showLoopBounds={loopMode === 'single'}
+              beatDuration={beatDuration}
             />
           </Box>
           <Box sx={{ flexGrow: 1 }}>
@@ -500,7 +588,8 @@ export default function LessonPage() {
                 videoRef={videoRef}
                 beatIndex={beatIndex}
                 pulse={pulse}
-                stepBeat={stepBeat}
+                onTogglePlay={togglePlay}
+                stepBeat={handleStepBeat}
                 // The overlay dots are 0-based; `Segment.index` (and therefore
                 // `goToSegment`) is 1-based, so convert here. `total` makes the
                 // dot count equal the number of selectable sections.
@@ -527,7 +616,7 @@ export default function LessonPage() {
               currentSegment={currentSegment}
               currentTime={currentTime}
               duration={duration}
-              onSeekTime={seek}
+              onSeekTime={handleSeekTime}
               onTogglePlay={togglePlay}
               onPrev={handlePrev}
               onNext={handleNext}
@@ -539,6 +628,7 @@ export default function LessonPage() {
               onClearAB={handleClearAB}
               onCompare={() => setCompareOpen((o) => !o)}
               comparing={compareOpen}
+              onConfirmBeatOffset={handleConfirmBeatOffset}
             />
           </Box>
         </Box>

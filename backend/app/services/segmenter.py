@@ -23,6 +23,12 @@ def aggregate(beat_times: List[float], duration: float, beats_per_segment: int =
     segment[i].beats     = beat_times[8i : 8i+8]   (fixed length 8)
     index starts at 1; type defaults to "dance".
     """
+    # A beat exactly at the media duration is an end boundary, not the start of
+    # a playable one-beat phrase. Drop it before grouping to avoid zero-length
+    # final segments in fixed-BPM/manual grids.
+    if duration and duration > 0:
+        beat_times = [beat for beat in beat_times if float(beat) < duration - 1e-9]
+
     segments: List[Segment] = []
     n = len(beat_times)
     if n == 0:
@@ -38,14 +44,20 @@ def aggregate(beat_times: List[float], duration: float, beats_per_segment: int =
         seg_beats = beat_times[i : i + beats_per_segment]
         if not seg_beats:
             break
-        start = float(seg_beats[0])
+        # The first phrase owns any silent/no-beat pre-roll so the lesson never
+        # starts several seconds into the video.
+        start = 0.0 if i == 0 and duration > 0 else float(seg_beats[0])
         if i + beats_per_segment < n:
             end = float(beat_times[i + beats_per_segment])
         else:
-            # Trailing phrase: extend to cover the remaining movement.
-            avg = _avg_interval(seg_beats)
-            tail = float(seg_beats[-1]) + 0.5 * avg
-            end = min(duration, tail) if duration and duration > 0 else tail
+            # The final phrase owns every remaining frame through media end.
+            # Falling back to half an interval is only for callers without a
+            # known duration.
+            if duration and duration > 0:
+                end = float(duration)
+            else:
+                avg = _avg_interval(seg_beats)
+                end = float(seg_beats[-1]) + 0.5 * avg
         segments.append(
             Segment(
                 index=index,

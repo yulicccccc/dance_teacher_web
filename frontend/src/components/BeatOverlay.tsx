@@ -53,7 +53,22 @@ export default function BeatOverlay({
             <Box
               key={i}
               className="rounded-full"
-              onClick={clickable ? () => onDotClick(i) : undefined}
+              onClick={
+                clickable
+                  ? (event) => {
+                      event.stopPropagation()
+                      onDotClick(i)
+                    }
+                  : undefined
+              }
+              onDoubleClick={
+                clickable
+                  ? (event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                    }
+                  : undefined
+              }
               sx={{
                 width: 14,
                 height: 14,

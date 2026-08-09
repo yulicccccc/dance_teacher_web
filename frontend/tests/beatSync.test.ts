@@ -3,7 +3,10 @@ import {
   locateBeat,
   computeLoopSegment,
   computePaddedLoopBounds,
+  computePaddedLoopBoundsForBlock,
+  buildLoopBlocks,
 } from '../src/hooks/useBeatSync'
+import { findBeatAt, resegmentSegments } from '../src/utils/segmentMath'
 import type { Segment } from '../src/types/api'
 
 /** Two 8-beat phrases @ 120 BPM (0.5s interval), matching the backend grid. */
@@ -27,6 +30,19 @@ function makeSegments(): Segment[] {
 }
 
 describe('locateBeat — segment + beat positioning', () => {
+  it('preserves the real count inside a leading partial phrase', () => {
+    const partial: Segment[] = [{
+      index: 1,
+      startTime: 0,
+      endTime: 2,
+      type: 'dance',
+      beats: [0, 0.5, 1, 1.5],
+      startBeat: 5,
+    }]
+    expect(locateBeat(partial, 0, 0)).toMatchObject({ activeSegment: 1, beatIndex: 5 })
+    expect(locateBeat(partial, 1.5, 1.4)).toMatchObject({ activeSegment: 1, beatIndex: 8 })
+  })
+
   it('locates the first segment and beat 1 exactly at t=0', () => {
     const r = locateBeat(makeSegments(), 0, 0)
     expect(r.activeSegment).toBe(1)
@@ -222,21 +238,65 @@ describe('computePaddedLoopBounds — 前后各一拍 padding', () => {
   })
 })
 
+describe('offset grid — every loop mode shares retained edge phrases', () => {
+  it('keeps 0..duration and derives single/multi/AB anchors from the same grid', () => {
+    const shifted = resegmentSegments(makeUniformSegments(5), -1, 20)
+    // -1 => seven visible counts (2..8) before the first complete new phrase.
+    expect(shifted[0]).toMatchObject({
+      index: 1,
+      startTime: 0,
+      endTime: 3.5,
+      startBeat: 2,
+    })
+    expect(shifted[shifted.length - 1].endTime).toBe(20)
+
+    const target = shifted[1] // first complete 1..8 phrase, 3.5..7.5
+    expect(computePaddedLoopBounds(target, shifted, 0.5)).toEqual({
+      loopStart: 3,
+      loopEnd: 8,
+    })
+
+    const blocks = buildLoopBlocks(shifted, [1, 2])
+    expect(blocks).toHaveLength(1)
+    expect(computePaddedLoopBoundsForBlock(blocks[0], shifted, 0.5)).toEqual({
+      loopStart: 0,
+      loopEnd: 8,
+    })
+
+    expect(findBeatAt(shifted, 3)).toMatchObject({
+      segIndex: 1,
+      beatInSeg: 8,
+      beatTime: 3,
+    })
+    expect(findBeatAt(shifted, 3.5)).toMatchObject({
+      segIndex: 2,
+      beatInSeg: 1,
+      beatTime: 3.5,
+    })
+  })
+})
+
 describe('QA 独立回归 — 循环 padding 边界', () => {
   // 5 segments: 0-4, 4-8, 8-12, 12-16, 16-20, 0.5s/beat.
   const segs = makeUniformSegments(5)
 
-  it('interior segment clamps loopStart at t=0 when beatDuration would push it negative', () => {
-    // segs[1] is segment index 2, window 4-8 (interior: has prev & next).
-    // With an absurdly large beatDuration the naive start would be 4-10 = -6,
-    // but the Math.max(..., 0) guard must clamp it to 0. The existing
-    // "clamps the lead-in at t=0" test only exercises the no-prev (first-seg)
-    // branch, which never reaches the MAX path — this test covers that path.
+  it('uses the adjacent real beat timestamps instead of an unrelated average duration', () => {
+    // Even an absurd global average cannot move the seam away from the actual
+    // previous beat 8 / boundary after the next beat 1.
     const r = computePaddedLoopBounds(segs[1], segs, 10)
-    expect(r.loopStart).toBe(0)
+    expect(r.loopStart).toBe(3.5)
     expect(r.loopStart).toBeGreaterThanOrEqual(0)
-    // trailing pad still applies: 8 + 10 = 18
-    expect(r.loopEnd).toBeCloseTo(18)
+    expect(r.loopEnd).toBeCloseTo(8.5)
+  })
+
+  it('honours a non-uniform beat grid exactly', () => {
+    const irregular = makeUniformSegments(3)
+    irregular[0].beats[7] = 3.72
+    irregular[2].beats[1] = 8.61
+    expect(computePaddedLoopBounds(irregular[1], irregular, 0.5)).toEqual({
+      loopStart: 3.72,
+      loopEnd: 8.61,
+    })
   })
 
   it('padded bounds sweep: ordered and inside the timeline for every segment', () => {

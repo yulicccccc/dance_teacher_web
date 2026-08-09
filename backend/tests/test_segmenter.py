@@ -31,9 +31,8 @@ def test_aggregate_120bpm_8s_produces_two_segments():
     assert segs[1].type == "dance"
     assert len(segs[1].beats) == 8
     assert segs[1].beats == [4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5]
-    # Last phrase extends by 0.5*avg_interval beyond the final beat (design §1.2).
-    # Final beat = 7.5, avg interval = 0.5 -> 7.5 + 0.25 = 7.75, clamped to duration 8.0.
-    assert math.isclose(segs[1].endTime, 7.75, abs_tol=1e-6)
+    # The final phrase owns every remaining frame through the media end.
+    assert math.isclose(segs[1].endTime, duration, abs_tol=1e-6)
 
 
 def test_aggregate_index_starts_at_one_and_increments():
@@ -75,13 +74,12 @@ def test_aggregate_non_multiple_of_8_keeps_final_phrase():
 
 def test_aggregate_exactly_8_beats_single_segment():
     # Exactly 8 beats (0.0 .. 3.5) with duration 4.0. Because there is no 9th
-    # beat, this is treated as the final phrase and extended by 0.5*avg_interval
-    # (design §1.2): last beat 3.5 + 0.25 = 3.75, clamped to duration 4.0 -> 3.75.
+    # beat, this is the final phrase and still covers the media through 4.0.
     beats = [round(i * 0.5, 4) for i in range(8)]
     segs = aggregate(beats, 4.0)
     assert len(segs) == 1
     assert segs[0].startTime == 0.0
-    assert segs[0].endTime == 3.75
+    assert segs[0].endTime == 4.0
 
 
 def test_generate_fixed_beats_regular_grid():
@@ -109,9 +107,9 @@ def test_generate_from_first_beat_anchors_start():
 def test_generate_fixed_then_aggregate_two_segments():
     beats = generate_fixed_beats(8.0, 120.0)
     segs = aggregate(beats, 8.0)
-    # 17 beats (0.0..8.0) -> 3 phrases (8 + 8 + 1); trailing phrase KEPT.
-    assert len(segs) == 3
+    # The beat exactly at 8.0 is an end boundary, not a zero-length phrase.
+    assert len(segs) == 2
     assert segs[0].endTime == 4.0
-    assert segs[2].endTime == 8.0  # last beat == duration -> clean round end
+    assert segs[1].endTime == 8.0
     assert len(segs[0].beats) == 8
     assert len(segs[1].beats) == 8

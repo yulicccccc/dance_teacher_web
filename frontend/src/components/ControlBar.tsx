@@ -44,6 +44,7 @@ interface Props {
   onClearAB: () => void
   onCompare: () => void
   comparing?: boolean
+  onConfirmBeatOffset?: (offset: number) => void
 }
 
 function formatABPoint(
@@ -91,6 +92,7 @@ export default function ControlBar({
   onClearAB,
   onCompare,
   comparing = false,
+  onConfirmBeatOffset,
 }: Props) {
   const playbackRate = useLessonStore((s) => s.playbackRate)
   const setPlaybackRate = useLessonStore((s) => s.setPlaybackRate)
@@ -309,7 +311,11 @@ export default function ControlBar({
             size="small"
             variant="contained"
             disabled={draftBeatOffset === beatOffset}
-            onClick={() => setBeatOffset(draftBeatOffset)}
+            onClick={() =>
+              onConfirmBeatOffset
+                ? onConfirmBeatOffset(draftBeatOffset)
+                : setBeatOffset(draftBeatOffset)
+            }
           >
             重新计算拍子
           </Button>

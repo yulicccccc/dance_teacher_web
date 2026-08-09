@@ -185,6 +185,26 @@ describe('useBeatSync — custom A→B loop (priority over single-segment loop)'
     container.remove()
   })
 
+  it('re-arms immediately when a seek lands beyond B', () => {
+    const ab: ABLoop = { enabled: true, aTime: 2.0, bTime: 6.0, aBeat: 5, bBeat: 13 }
+    const { video, timeLog, root, container } = setup({
+      segments: makeSegments(),
+      loop: false,
+      offset: 0,
+      beatDuration: 0.5,
+      abLoop: ab,
+    })
+    act(() => {
+      video.currentTime = 7.0
+      video.dispatchEvent(new Event('seeked'))
+    })
+    timeLog.length = 0
+    step()
+    expect(timeLog.some((time) => Math.abs(time - 2.0) < 1e-3)).toBe(true)
+    root.unmount()
+    container.remove()
+  })
+
   it('does NOT loop when aTime >= bTime (degenerate / disabled)', () => {
     const ab: ABLoop = { enabled: true, aTime: 6.0, bTime: 6.0, aBeat: 13, bBeat: 13 }
     const { video, timeLog, root, container } = setup({

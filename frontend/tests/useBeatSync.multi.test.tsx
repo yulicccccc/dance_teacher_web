@@ -168,6 +168,70 @@ describe('useBeatSync — multi-segment loop (Part 2)', () => {
     container.remove()
   })
 
+  it('keeps an explicit target when rAF runs before seeked and the frame lands just before its boundary', () => {
+    const forceLoopTargetRef = { current: null } as MutableRefObject<number | null>
+    const { video, timeLog, root, container } = setup({
+      segments: makeSegments(),
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+      loopMode: 'single',
+      loopSegmentIds: [],
+      forceLoopTargetRef,
+    })
+    act(() => {
+      video.currentTime = 1
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+
+    // Real compressed video often lands a fraction before the requested 8.0s
+    // boundary. Reproduce the failing browser order: rAF consumes target 3,
+    // then the asynchronous seeked event arrives for a 7.999s decoded frame.
+    forceLoopTargetRef.current = 3
+    act(() => {
+      video.currentTime = 7.999
+    })
+    step()
+    expect(forceLoopTargetRef.current).toBeNull()
+    act(() => {
+      video.dispatchEvent(new Event('seeked'))
+    })
+
+    const loopBacks: number[] = []
+    drive(video, timeLog, 7.999, 650, 0.01, (time) => loopBacks.push(time))
+    expect(loopBacks.some((time) => Math.abs(time - 7.5) < 1e-3)).toBe(true)
+    // Re-locking onto segment 2 would loop at 8.5s and cascade to 3.5s.
+    expect(loopBacks.some((time) => Math.abs(time - 3.5) < 1e-3)).toBe(false)
+    root.unmount()
+    container.remove()
+  })
+
+  it('recovers a single-loop boundary even when the previous frame is already beyond it', () => {
+    const forceLoopTargetRef = { current: null } as MutableRefObject<number | null>
+    const { video, timeLog, root, container } = setup({
+      segments: makeSegments(),
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+      loopMode: 'single',
+      loopSegmentIds: [],
+      forceLoopTargetRef,
+    })
+    act(() => {
+      video.currentTime = 13
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+
+    forceLoopTargetRef.current = 3
+    timeLog.length = 0
+    step()
+    expect(timeLog.some((time) => Math.abs(time - 7.5) < 1e-3)).toBe(true)
+    root.unmount()
+    container.remove()
+  })
+
   it('merges contiguous selected segments into one padded loop block', () => {
     const { video, timeLog, root, container } = setup({
       segments: makeSegments(),
@@ -217,6 +281,43 @@ describe('useBeatSync — multi-segment loop (Part 2)', () => {
     })
     expect(sawSeg3Start).toBe(true)
     expect(sawSeg1Start).toBe(true)
+    root.unmount()
+    container.remove()
+  })
+
+  it('an explicit multi-mode list target re-anchors the very first block', () => {
+    const forceLoopTargetRef = { current: null } as MutableRefObject<number | null>
+    const { video, timeLog, root, container } = setup({
+      segments: makeSegments(),
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+      loopMode: 'multi',
+      loopSegmentIds: [3, 5],
+      forceLoopTargetRef,
+    })
+    // Start on selected block 5 so the cursor is deliberately anchored there.
+    act(() => {
+      video.currentTime = 17
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+
+    // Then click block 3 and reproduce rAF-before-seeked plus a slightly early
+    // decoded landing. The first boundary must go 3 -> 5 (15.5s), not keep
+    // playing through the gap until block 5 ends.
+    forceLoopTargetRef.current = 3
+    act(() => {
+      video.currentTime = 7.999
+    })
+    step()
+    act(() => {
+      video.dispatchEvent(new Event('seeked'))
+      video.currentTime = 12.51
+    })
+    timeLog.length = 0
+    step()
+    expect(timeLog.some((time) => Math.abs(time - 15.5) < 1e-3)).toBe(true)
     root.unmount()
     container.remove()
   })

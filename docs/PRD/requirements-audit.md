@@ -1,6 +1,8 @@
 # 舞蹈老师需求总台账
 
-> 最后核对：2026-08-08
+> 最后核对：2026-08-09
+>
+> 权威产品文档：`docs/PRD/PRD-v1.0-complete.md`。本文件作为逐项防回归台账，不替代完整 PRD。
 > 用途：任何重构、回滚和部署都必须逐项检查，避免修一个问题时丢掉别的功能。
 
 ## 1. 需求源与优先级
@@ -24,7 +26,7 @@
 | P0-2 librosa BPM + 8 拍分段 | 服务端 ffmpeg/librosa，与本地使用同一算法 | 后端 beat/segment 测试；真实 MOV 本地/线上同为 127.15 BPM |
 | P0-3 四阶段分析进度与重试 | queued → extracting → beat_detecting → segmenting → done/failed | `AnalysisPage`、API retry 测试 |
 | P0-4 小节列表、点击跳转、当前节高亮 | 保留；多节模式下该列表同时承担唯一勾选入口 | `SegmentList.multiSelect.test.tsx` |
-| P0-5 变速 + 可拖动进度 | 0.25x–1.5x 连续变速、1x 复位、时间轴拖动 | `ControlBar`、类型检查 |
+| P0-5 播放器基础操作 + 变速/进度 | 单击播放/暂停；双击左/中/右=上一拍/全屏/下一拍；空格/K、←→、F；0.25x–1.5x 变速与时间轴拖动 | `VideoPlayer.test.tsx`、`ControlBar` |
 | P0-6 分段循环 | 单节、多节、AB 三种模式，共用一个“循环”总开关 | 循环测试组 |
 | P0-7 1–8 数拍 + 脉冲 | rAF 驱动，节拍叠加层独立镜像 | `BeatOverlay.test.tsx`、beat sync 测试 |
 | P0-8 镜像/视角 | 单机位视频镜像默认开；拍点镜像独立控制 | `ControlBar.loopButton.test.tsx`、`VideoPlayer.test.tsx` |
@@ -40,7 +42,7 @@
 | P0-8~9 | 单节前后各一拍；点哪节自动开循环并强制锁到该节，避免旧目标回拉 | `useBeatSync.test.tsx`、`useBeatSync.multi.test.tsx` |
 | P0-10 | 连续多节合并成一个块；非连续块按顺序轮转；块前后各一拍 | `useBeatSync.multi.test.tsx` |
 | P0-11 | AB 拍点对齐；只有 AB 模式且总开关开启时驱动 AB 引擎 | `abLoop.test.tsx`、LessonPage 映射 |
-| P0-12 | 左半屏上一拍、右半屏下一拍，方向不受视频镜像影响 | `VideoPlayer.test.tsx`、`useBeatSync.step.test.tsx` |
+| P0-12 | 单击画面播放/暂停；双击左/中/右三区=上一拍/全屏/下一拍，方向不受视频镜像影响 | `VideoPlayer.test.tsx`、`useBeatSync.step.test.tsx` |
 | P0-13 | 新状态字段和旧 `loopSegment` / `abLoop.enabled` 存档迁移 | `localProgress.test.ts` |
 | P0-14 | 切模式只改 store，不 seek、不暂停 | store 单元测试 + 引擎模式回归 |
 | P1-1 | 状态摘要：关闭、单节、多节区间折叠、AB 端点 | `ControlBar` |
@@ -49,17 +51,17 @@
 | P1-6 | 点文字跳转；点 checkbox 只勾选，两个热区互不串扰 | `SegmentList.multiSelect.test.tsx` |
 | P1-7 | 循环模式、开关、选择、AB、次数均持久化 | `useLocalProgress` |
 
-循环 v2 的 P2 属于原 PRD 明确列出的可选/非目标：快捷键、Shift 连选和进度条循环块
-仍记录在后续路线；其中“循环次数上限 UI”已经提前完成。
+循环 v2 的 P2 属于原 PRD 明确列出的可选/非目标：Shift 连选和进度条循环块
+仍记录在后续路线；其中基础播放器快捷键与“循环次数上限 UI”已经提前完成。
 
 ## 4. 已有增强能力（不得回归）
 
 - 中文语音数拍，可开关。
 - 低置信度提示、自动/固定 120/手动第一拍/手填 BPM 重算。
-- 拍点偏移采用“草稿 → 重新计算拍子”两段式确认，拖动时不破坏循环目标。
+- 拍点偏移采用“草稿 → 重新计算拍子”两段式确认；确认后所有播放/循环功能读取同一新网格，首尾不足 8 拍的小节仍保留并覆盖完整视频时长。
 - 我的课程、断点续学、已学小节、完成度百分比和累计练习时长统计。
 - 摄像头左右对照、录制、下载；进入对照时主循环引擎不抢 seek。
-- 内置示例、全屏、双击逐拍、循环次数限制。
+- 内置示例、单击画面播放/暂停、双击三区逐拍/全屏、基础键盘操作、循环次数限制。
 
 ## 5. 已登记的后续阶段（不是本轮遗漏）
 

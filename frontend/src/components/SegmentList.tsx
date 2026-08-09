@@ -11,6 +11,7 @@ import {
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import type { Segment } from '../types/api'
 import { formatDuration } from '../utils/format'
+import { computePaddedLoopBounds } from '../hooks/useBeatSync'
 
 interface Props {
   segments: Segment[]
@@ -23,6 +24,9 @@ interface Props {
   onToggleLoopId?: (index: number) => void
   onSelectAll?: () => void
   onClearSelection?: () => void
+  /** In single mode, show the exact padded playback window for every segment. */
+  showLoopBounds?: boolean
+  beatDuration?: number
 }
 
 /** Left-rail phrase navigator and, in multi mode, the sole loop selector. */
@@ -36,6 +40,8 @@ export default function SegmentList({
   onToggleLoopId,
   onSelectAll,
   onClearSelection,
+  showLoopBounds = false,
+  beatDuration = 0,
 }: Props) {
   return (
     <Box>
@@ -58,6 +64,18 @@ export default function SegmentList({
           const isCurrent = seg.index === currentSegment
           const learned = learnedSegments.includes(seg.index)
           const selectedForLoop = selectedLoopIds.includes(seg.index)
+          const loopBounds = showLoopBounds
+            ? computePaddedLoopBounds(seg, segments, beatDuration)
+            : null
+          const firstBeat = seg.startBeat ?? 1
+          const lastBeat = firstBeat + seg.beats.length - 1
+          const partial = seg.beats.length > 0 && (firstBeat !== 1 || seg.beats.length < 8)
+          const partialLabel = partial
+            ? `残缺小节 · ${firstBeat === lastBeat ? `${firstBeat} 拍` : `${firstBeat}–${lastBeat} 拍`}\n`
+            : ''
+          const secondary = loopBounds
+            ? `${partialLabel}时长 ${formatDuration(seg.endTime - seg.startTime)}\n循环 ${loopBounds.loopStart.toFixed(2)}–${loopBounds.loopEnd.toFixed(2)} 秒`
+            : `${partialLabel}时长 ${formatDuration(seg.endTime - seg.startTime)}`
           return (
             <ListItemButton
               key={seg.index}
@@ -83,7 +101,8 @@ export default function SegmentList({
               )}
               <ListItemText
                 primary={`${seg.index} / ${segments.length} 小节`}
-                secondary={`时长 ${formatDuration(seg.endTime - seg.startTime)}`}
+                secondary={secondary}
+                secondaryTypographyProps={{ sx: { whiteSpace: 'pre-line' } }}
               />
               {learned && (
                 <Chip

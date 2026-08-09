@@ -207,7 +207,7 @@ def test_api_recompute_fixed120(injected_task):
     assert r.status_code == 200
     body = r.json()
     assert body["bpm"] == 120.0
-    assert len(body["segments"]) == 3
+    assert len(body["segments"]) == 2
     assert body["segments"][0]["index"] == 1
 
 

@@ -14,7 +14,7 @@ const segments: Segment[] = [1, 2, 3].map((index) => ({
   beats: [],
 }))
 
-function setup(multiSelect: boolean) {
+function setup(multiSelect: boolean, showLoopBounds = false) {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -34,6 +34,8 @@ function setup(multiSelect: boolean) {
         onToggleLoopId={onToggleLoopId}
         onSelectAll={onSelectAll}
         onClearSelection={onClearSelection}
+        showLoopBounds={showLoopBounds}
+        beatDuration={0.5}
       />,
     )
   })
@@ -60,5 +62,36 @@ describe('SegmentList multi-loop ownership', () => {
     act(() => (boxes[1] as HTMLInputElement).click())
     expect(onToggleLoopId).toHaveBeenCalledWith(2)
     expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it('shows the exact padded second range only in single-loop view', () => {
+    const { container } = setup(false, true)
+    expect(container.textContent).toContain('循环 3.50–8.50 秒')
+    document.body.innerHTML = ''
+    expect(setup(true, false).container.textContent).not.toContain('循环')
+  })
+
+  it('labels a retained leading fragment with its real beat numbers', () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    act(() => {
+      root.render(
+        <SegmentList
+          segments={[{
+            index: 1,
+            startTime: 0,
+            endTime: 2,
+            type: 'dance',
+            beats: [0, 0.5, 1, 1.5],
+            startBeat: 5,
+          }]}
+          currentSegment={1}
+          learnedSegments={[]}
+          onSelect={vi.fn()}
+        />,
+      )
+    })
+    expect(container.textContent).toContain('残缺小节 · 5–8 拍')
   })
 })
