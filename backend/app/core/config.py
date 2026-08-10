@@ -10,7 +10,7 @@ import os
 # backend/  (this file lives in backend/app/core/config.py)
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-DATA_DIR = os.path.join(BACKEND_DIR, "data")
+DATA_DIR = os.getenv("DANCE_TEACHER_DATA_DIR", os.path.join(BACKEND_DIR, "data"))
 TASKS_DIR = os.path.join(DATA_DIR, "tasks")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 WAV_DIR = os.path.join(DATA_DIR, "wav")

@@ -1,35 +1,82 @@
 #!/bin/bash
-# 舞蹈教学网站 — 本地一键启动（单端口：后端同时托管前端 + API）
-# 用法：在 Finder 里双击本文件（会打开终端并运行），或终端里执行 bash start_local.command
-# 启动后，浏览器打开 http://localhost:8000 即可使用。
-# 关闭：在终端按 Ctrl+C。
+# 舞蹈老师本地版：用与网页部署相同的 Docker 镜像启动前后端。
 
-set -e
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR/backend"
+set -Eeuo pipefail
 
-# numba(librosa 加速引擎) 的 JIT 缓存放到系统临时目录，避免某些环境的"安全删除"钩子拦截。
-if [ -z "$NUMBA_CACHE_DIR" ]; then
-  NUMBA_CACHE_DIR="${TMPDIR:-/tmp}/numba_cache"
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_PORT="${DANCE_TEACHER_PORT:-8000}"
+APP_URL="http://localhost:${APP_PORT}"
+COMPOSE_FILE="$APP_DIR/compose.yaml"
+COMPOSE_CMD=(
+  docker compose
+  --project-directory "$APP_DIR"
+  --file "$COMPOSE_FILE"
+)
+
+print_banner() {
+  echo "=================================================="
+  echo " 舞蹈老师 · 本地一键启动"
+  echo "=================================================="
+}
+
+wait_for_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "没有找到 Docker。请先安装并打开 Docker Desktop。"
+    return 1
+  fi
+
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ "$(uname -s)" = "Darwin" ] && open -Ra Docker >/dev/null 2>&1; then
+    echo "Docker Desktop 还没运行，正在替你打开……"
+    open -gja Docker
+    for _attempt in $(seq 1 60); do
+      if docker info >/dev/null 2>&1; then
+        echo "Docker 已就绪。"
+        return 0
+      fi
+      sleep 2
+    done
+  fi
+
+  echo "Docker Desktop 未能就绪。请确认它已完成启动后再试。"
+  return 1
+}
+
+open_app() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    open "$APP_URL"
+  fi
+}
+
+print_banner
+wait_for_docker
+
+RUNNING_CONTAINER="$("${COMPOSE_CMD[@]}" ps --quiet app 2>/dev/null || true)"
+HEALTH_STATUS=""
+if [ -n "$RUNNING_CONTAINER" ]; then
+  HEALTH_STATUS="$(docker inspect --format '{{.State.Health.Status}}' "$RUNNING_CONTAINER" 2>/dev/null || true)"
 fi
-mkdir -p "$NUMBA_CACHE_DIR"
-export NUMBA_CACHE_DIR
 
-VENV_PY="$SCRIPT_DIR/backend/.venv/bin/python"
-VENV_UVICORN="$SCRIPT_DIR/backend/.venv/bin/uvicorn"
-
-# 若 venv 不存在或没装依赖，自动重建（仅首次会慢，需要联网装 librosa 等）。
-if [ ! -x "$VENV_UVICORN" ]; then
-  echo "[setup] 首次初始化 Python 虚拟环境并安装后端依赖（librosa 等，约 1-3 分钟）..."
-  /Users/claw/.workbuddy/binaries/python/versions/3.13.12/bin/python3 -m venv "$SCRIPT_DIR/backend/.venv"
-  "$SCRIPT_DIR/backend/.venv/bin/pip" install --upgrade pip -q
-  unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY 2>/dev/null || true
-  "$SCRIPT_DIR/backend/.venv/bin/pip" install --only-binary=:all: -r "$SCRIPT_DIR/backend/requirements.txt"
+if [ "$HEALTH_STATUS" = "healthy" ]; then
+  echo "本地版已经在运行，正在打开浏览器：$APP_URL"
+  open_app
+  exit 0
 fi
 
-echo "=================================================="
-echo " 舞蹈教学网站本地版已启动"
-echo " 浏览器打开: http://localhost:8000"
-echo " 关闭请按 Ctrl+C"
-echo "=================================================="
-exec "$VENV_UVICORN" app.main:app --host 0.0.0.0 --port 8000
+echo "正在构建最新前后端并启动（首次约需几分钟，之后通常很快）……"
+if ! "${COMPOSE_CMD[@]}" up --detach --build --wait --wait-timeout 300; then
+  echo
+  echo "容器启动失败，以下是最近的诊断信息："
+  "${COMPOSE_CMD[@]}" ps || true
+  "${COMPOSE_CMD[@]}" logs --tail 80 || true
+  exit 1
+fi
+
+echo
+echo "本地版已启动：$APP_URL"
+echo "视频和练习数据保存在项目的 backend/data 文件夹，不会随容器关闭而丢失。"
+
+open_app

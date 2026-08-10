@@ -7,6 +7,8 @@ export interface Segment {
   endTime: number // seconds
   type: string // dance | intro | break
   beats: number[] // length 8, per-beat timestamps (seconds)
+  /** First displayed count in a leading partial phrase; full phrases start at 1. */
+  startBeat?: number
 }
 
 /** A custom A→B loop anchored on beat boundaries (拍子级自定义循环). */

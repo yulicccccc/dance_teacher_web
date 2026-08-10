@@ -91,8 +91,8 @@ def test_recompute_fixed120(tmp_path, monkeypatch):
     assert res.progress == 100
     assert res.bpm == 120.0
     assert res.confidence == 1.0
-    # FAKE_DURATION=8.0 -> 17 beats -> 3 phrases (8 + 8 + 1); trailing KEPT.
-    assert len(res.segments) == 3
+    # The t=8.0 boundary is not emitted as a zero-length third phrase.
+    assert len(res.segments) == 2
     assert res.segments[0].index == 1
     assert res.segments[0].startTime == 0.0
     assert len(res.segments[0].beats) == 8
@@ -111,11 +111,12 @@ def test_recompute_manual_first_beat(tmp_path, monkeypatch):
 
     res = tm.recompute(tid, "manual_first_beat", 1.0)
     assert res.status == "done"
-    # 15 beats over 8s -> 2 phrases (8 + 7); the 7-beat tail is KEPT.
+    # The pre-roll belongs to the first phrase; the t=8 boundary is excluded.
     assert len(res.segments) == 2
-    assert res.segments[0].startTime == 1.0
+    assert res.segments[0].startTime == 0.0
     assert len(res.segments[0].beats) == 8
-    assert len(res.segments[1].beats) == 7
+    assert len(res.segments[1].beats) == 6
+    assert res.segments[-1].endTime == FAKE_DURATION
 
 
 def test_recompute_manual_requires_first_beat(tmp_path, monkeypatch):
@@ -143,4 +144,4 @@ def test_recompute_persists_to_disk(tmp_path, monkeypatch):
     reloaded = tm2.get_status(tid)
     assert reloaded is not None
     assert reloaded.status == "done"
-    assert len(reloaded.segments) == 3
+    assert len(reloaded.segments) == 2

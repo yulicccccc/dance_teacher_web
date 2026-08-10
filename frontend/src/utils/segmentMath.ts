@@ -1,5 +1,21 @@
 import type { Segment } from '../types/api'
 
+/** Robust per-beat interval derived only from adjacent beat timestamps. */
+export function estimateBeatDuration(segments: Segment[]): number {
+  const beats = segments.flatMap((segment) => segment.beats)
+  const intervals: number[] = []
+  for (let index = 1; index < beats.length; index++) {
+    const interval = beats[index] - beats[index - 1]
+    if (Number.isFinite(interval) && interval > 1e-6) intervals.push(interval)
+  }
+  if (intervals.length === 0) return 0
+  intervals.sort((a, b) => a - b)
+  const middle = Math.floor(intervals.length / 2)
+  return intervals.length % 2 === 1
+    ? intervals[middle]
+    : (intervals[middle - 1] + intervals[middle]) / 2
+}
+
 /**
  * Re-cut the 8-beat phrase grid so that every phrase boundary follows the
  * manual `beatOffset` (measured in beats).
@@ -37,14 +53,12 @@ import type { Segment } from '../types/api'
  *
  * ## Edge handling
  * - Empty input → `[]`.
- * - Leading partial phrase (the `startIndex` beats before the first clean
- *   phrase) is dropped — the video genuinely starts mid-phrase, so there is no
- *   full 8-beat phrase there. This is intended: `SegmentList` may show one
- *   fewer phrase after a large offset.
- * - Trailing partial phrase (< 8 beats left) is dropped so every phrase stays a
- *   clean 8 beats.
+ * - The leading partial phrase is kept from media time 0 to the first shifted
+ *   downbeat. `startBeat` records its real first count (for example 5 when the
+ *   visible fragment is beats 5..8).
+ * - The trailing partial phrase is kept through the exact media duration.
  * - `beatOffset === 0` returns a grid equivalent to the input (same count,
- *   start/end times, and beats), preserving each phrase's `type`.
+ *   boundaries and beats) when the input already covers the whole media.
  *
  * Pure & side-effect free — same input always yields the same output — so it
  * can be unit-tested without React or a `<video>` element.
@@ -52,6 +66,7 @@ import type { Segment } from '../types/api'
 export function resegmentSegments(
   segments: Segment[],
   beatOffset: number,
+  duration?: number,
 ): Segment[] {
   // 1. Flatten every phrase's beats into one monotone time series.
   const allBeats: number[] = []
@@ -60,38 +75,62 @@ export function resegmentSegments(
   }
   if (allBeats.length === 0) return []
 
+  const originalEnd = segments.reduce(
+    (max, segment) => Math.max(max, segment.endTime),
+    0,
+  )
+  const hasDuration = Number.isFinite(duration) && (duration ?? 0) > 0
+  const mediaEnd = hasDuration ? Number(duration) : originalEnd
+  // A beat exactly at duration is a boundary with no playable frame after it,
+  // not a one-beat zero-length phrase.
+  const beats = hasDuration
+    ? allBeats.filter((beat) => beat < mediaEnd - 1e-9)
+    : allBeats
+  if (beats.length === 0 || mediaEnd <= 0) return []
+
   // 2. First beat index of the shifted phrase grid.
   const startIndex = ((beatOffset % 8) + 8) % 8
 
-  // Largest original end time — used as the end time of the final (possibly
-  // partial) phrase so it still spans to the end of the media.
-  const lastEndTime = segments.reduce(
-    (max, s) => (s.endTime > max ? s.endTime : max),
-    -Infinity,
-  )
-
   const result: Segment[] = []
-  // 3. Cut one phrase per step. When beatOffset ≠ 0 the grid shifts and the
-  // final phrase may contain fewer than 8 beats — we still keep it so the
-  // displayed segment count always matches the original analysis.
-  for (let i = 0; startIndex + i * 8 < allBeats.length; i++) {
-    const base = startIndex + i * 8
-    const beats = allBeats.slice(base, base + 8)
-    const startTime = beats[0]
-    // Interior boundary = the first beat of the next phrase (its start time);
-    // the final phrase falls back to the original last end time.
-    const endTime = base + 8 < allBeats.length ? allBeats[base + 8] : lastEndTime
+  const append = (
+    phraseBeats: number[],
+    startTime: number,
+    endTime: number,
+    startBeat?: number,
+  ) => {
+    if (endTime <= startTime + 1e-9) return
     // Preserve the original phrase's semantic type for this beat group.
+    const anchor = phraseBeats[0] ?? startTime
     const sourceSeg =
-      segments.find((s) => s.startTime <= startTime && s.endTime > startTime) ??
-      segments.find((s) => s.startTime <= startTime && s.endTime >= startTime)
+      segments.find((s) => s.startTime <= anchor && s.endTime > anchor) ??
+      segments.find((s) => s.startTime <= anchor && s.endTime >= anchor) ??
+      segments[0]
     result.push({
-      index: i + 1,
+      index: result.length + 1,
       startTime,
       endTime,
       type: sourceSeg ? sourceSeg.type : 'dance',
-      beats,
+      beats: phraseBeats,
+      ...(startBeat && startBeat !== 1 ? { startBeat } : {}),
     })
+  }
+
+  // 3. Keep the fragment before the first shifted downbeat. For startIndex=4,
+  // the visible original beats 0..3 are counts 5..8 of the previous phrase.
+  if (startIndex > 0) {
+    const partialBeats = beats.slice(0, Math.min(startIndex, beats.length))
+    const partialEnd = startIndex < beats.length ? beats[startIndex] : mediaEnd
+    append(partialBeats, 0, partialEnd, 9 - startIndex)
+  }
+
+  // 4. Cut complete phrases from the shifted downbeat and keep the final short
+  // phrase through mediaEnd. With no offset the first phrase also owns any
+  // no-beat pre-roll between 0 and the first detected beat.
+  for (let base = startIndex; base < beats.length; base += 8) {
+    const phraseBeats = beats.slice(base, base + 8)
+    const startTime = base === 0 ? 0 : beats[base]
+    const endTime = base + 8 < beats.length ? beats[base + 8] : mediaEnd
+    append(phraseBeats, startTime, endTime)
   }
   return result
 }
@@ -133,7 +172,12 @@ export function findBeatAt(segments: Segment[], time: number): BeatHit | null {
       global += 1
       const bt = seg.beats[k]
       if (bt <= time) {
-        found = { segIndex: seg.index, beatInSeg: k + 1, beatTime: bt, globalBeat: global }
+        found = {
+          segIndex: seg.index,
+          beatInSeg: (seg.startBeat ?? 1) + k,
+          beatTime: bt,
+          globalBeat: global,
+        }
       }
     }
   }
@@ -141,7 +185,12 @@ export function findBeatAt(segments: Segment[], time: number): BeatHit | null {
     // Leading gap before the first beat: anchor on the first beat anyway so
     // the caller always gets a real beat to loop on.
     const first = segments[0]
-    found = { segIndex: first.index, beatInSeg: 1, beatTime: first.beats[0], globalBeat: 1 }
+    found = {
+      segIndex: first.index,
+      beatInSeg: first.startBeat ?? 1,
+      beatTime: first.beats[0],
+      globalBeat: 1,
+    }
   }
   return found
 }

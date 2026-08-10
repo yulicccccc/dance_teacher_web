@@ -15,7 +15,7 @@ const segments: Segment[] = Array.from({ length: 3 }, (_, i) => ({
   beats: Array.from({ length: 8 }, (_, beat) => i * 4 + beat * 0.5),
 }))
 
-function setup() {
+function setup(onConfirmBeatOffset?: (offset: number) => void) {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -40,6 +40,7 @@ function setup() {
         onSetB={noop}
         onClearAB={noop}
         onCompare={noop}
+        onConfirmBeatOffset={onConfirmBeatOffset}
       />,
     )
   })
@@ -114,5 +115,14 @@ describe('ControlBar loop-redesign contract', () => {
     expect(confirm.disabled).toBe(false)
     act(() => confirm.click())
     expect(useLessonStore.getState().beatOffset).toBe(2)
+  })
+
+  it('delegates confirmed offset so the lesson can reconcile every dependent feature', () => {
+    const onConfirm = vi.fn()
+    const container = setup(onConfirm)
+    act(() => useLessonStore.getState().setDraftBeatOffset(3))
+    act(() => button(container, '重新计算拍子').click())
+    expect(onConfirm).toHaveBeenCalledWith(3)
+    expect(useLessonStore.getState().beatOffset).toBe(0)
   })
 })

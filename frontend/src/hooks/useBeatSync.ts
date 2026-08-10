@@ -37,13 +37,17 @@ export function locateBeat(
 ): BeatLocator {
   const seg =
     segments.find((s) => currentTime >= s.startTime && currentTime < s.endTime) ??
-    (segments.length ? segments[segments.length - 1] : null)
+    (segments.length
+      ? currentTime < segments[0].startTime
+        ? segments[0]
+        : segments[segments.length - 1]
+      : null)
   if (!seg) {
     return { activeSegment: 0, beatIndex: 0, crossed: false }
   }
   let beatIndex = 0
   for (let k = 0; k < seg.beats.length; k++) {
-    if (seg.beats[k] <= currentTime) beatIndex = k + 1
+    if (seg.beats[k] <= currentTime) beatIndex = (seg.startBeat ?? 1) + k
   }
   let crossed = false
   for (const bt of seg.beats) {
@@ -101,21 +105,19 @@ export interface PaddedLoopBounds {
 /**
  * Compute the padded loop window for a single-segment loop.
  *
- * A strict `[seg.startTime, seg.endTime)` loop chops off the leading beat of
- * the *previous* phrase and the trailing beat of the *next* one, so the dance
- * action never lines up across the loop seam. We extend the window by one beat
- * on BOTH sides:
+ * A strict `[seg.startTime, seg.endTime)` loop chops off the transition on both
+ * sides. The requested dance-practice window is:
  *
- *   loopStart = prevSeg ? Math.max(seg.startTime - beatDuration, 0) : seg.startTime
- *   loopEnd   = nextSeg ? seg.endTime + beatDuration               : seg.endTime
+ *   previous phrase beat 8 -> target beats 1..8 -> next phrase beat 1
  *
- * `segments` already carry the baked-in `beatOffset` (see `offsetSegments`),
- * so no extra offset math is needed here — `beatDuration` is used directly.
+ * Beat timestamps are the source of truth: the start is the previous phrase's
+ * final beat and the end is the next phrase's second beat (the boundary after
+ * its first beat has played). `beatDuration` is only a fallback for legacy or
+ * partial grids. `segments` already carry any baked-in beat offset.
  *
  * The window is clamped at the timeline edges: the first segment never loops
  * before `t=0` and the last segment never loops past the media end. If
- * `beatDuration` is not a positive finite number we degrade gracefully to the
- * raw `[startTime, endTime)` window.
+ * beat data is unavailable we degrade gracefully to the nearest safe boundary.
  *
  * Pure and side-effect free so it can be unit-tested without a `<video>`.
  */
@@ -126,14 +128,25 @@ export function computePaddedLoopBounds(
 ): PaddedLoopBounds {
   const safeBeat =
     Number.isFinite(beatDuration) && beatDuration > 0 ? beatDuration : 0
+  if (safeBeat === 0) {
+    return { loopStart: target.startTime, loopEnd: target.endTime }
+  }
   const idx = segments.indexOf(target)
   const prevSeg = idx > 0 ? segments[idx - 1] : null
   const nextSeg = idx >= 0 && idx < segments.length - 1 ? segments[idx + 1] : null
 
+  // Prefer real beat timestamps over a global average. This makes the seam
+  // exactly: previous phrase beat 8 -> target beats 1..8 -> next phrase beat 1.
+  // `loopEnd` is the boundary immediately AFTER that next first beat, normally
+  // its second beat. The duration fallback covers partial/legacy beat grids.
+  const previousBeat8 = prevSeg?.beats[prevSeg.beats.length - 1]
+  const afterNextBeat1 = nextSeg?.beats[1]
   const loopStart = prevSeg
-    ? Math.max(target.startTime - safeBeat, 0)
+    ? Math.max(previousBeat8 ?? target.startTime - safeBeat, 0)
     : target.startTime
-  const loopEnd = nextSeg ? target.endTime + safeBeat : target.endTime
+  const loopEnd = nextSeg
+    ? afterNextBeat1 ?? Math.min(target.endTime + safeBeat, nextSeg.endTime)
+    : target.endTime
   return { loopStart, loopEnd }
 }
 
@@ -172,13 +185,26 @@ export function computePaddedLoopBoundsForBlock(
     Number.isFinite(beatDuration) && beatDuration > 0 ? beatDuration : 0
   const startTime = block.segments[0].startTime
   const endTime = block.segments[block.segments.length - 1].endTime
+  if (safeBeat === 0) return { loopStart: startTime, loopEnd: endTime }
   const firstSeg = segments[0]
   const lastSeg = segments[segments.length - 1]
   const hasLeadRoom = !!firstSeg && startTime > firstSeg.startTime + 1e-9
   const hasTrailRoom = !!lastSeg && endTime < lastSeg.endTime - 1e-9
+  const firstIndex = segments.indexOf(block.segments[0])
+  const lastIndex = segments.indexOf(block.segments[block.segments.length - 1])
+  const previous = firstIndex > 0 ? segments[firstIndex - 1] : null
+  const next = lastIndex >= 0 && lastIndex < segments.length - 1
+    ? segments[lastIndex + 1]
+    : null
+  const previousBeat8 = previous?.beats[previous.beats.length - 1]
+  const afterNextBeat1 = next?.beats[1]
   return {
-    loopStart: hasLeadRoom ? Math.max(startTime - safeBeat, 0) : startTime,
-    loopEnd: hasTrailRoom ? endTime + safeBeat : endTime,
+    loopStart: hasLeadRoom
+      ? Math.max(previousBeat8 ?? startTime - safeBeat, 0)
+      : startTime,
+    loopEnd: hasTrailRoom
+      ? afterNextBeat1 ?? Math.min(endTime + safeBeat, next?.endTime ?? endTime + safeBeat)
+      : endTime,
   }
 }
 
@@ -244,6 +270,12 @@ export function useBeatSync(
   // the previous segment) cannot re-trigger a loop and cascade backward.
   // Cleared whenever looping is disabled so it re-acquires on the next enable.
   const loopTargetRef = useRef<number | null>(null)
+  // A segment-list click writes `forceLoopTargetRef` immediately before it
+  // seeks. Depending on the browser, rAF may consume that value before OR after
+  // `seeked`. Keep a second copy until `seeked` settles so a frame landing a few
+  // milliseconds before the requested boundary cannot re-lock 5 -> 4 (and then
+  // cascade to 3 on the next padded restart).
+  const forcedTargetAwaitingSeekRef = useRef<number | null>(null)
   // Guard flag set immediately BEFORE the single-segment loop performs its OWN
   // programmatic loop-back seek (`video.currentTime = bounds.loopStart`). The
   // `seeked` listener reads it to tell the loop's own loop-back apart from a
@@ -255,6 +287,7 @@ export function useBeatSync(
   // tolerance — the old 10ms position comparison misread loop-backs as user
   // jumps and cascaded backward.
   const seekingForLoopRef = useRef(false)
+  const loopSeekLandingRef = useRef<number | null>(null)
   // Tracks the previous-frame value of `loopRef` so we can detect the *rising
   // edge* of "single-segment loop" enable. On that edge we immediately lock
   // `loopTargetRef` to the segment the playhead is currently IN (from
@@ -291,6 +324,7 @@ export function useBeatSync(
   // programmatic loop-back; when it reaches `loopCount` we stop seeking back so
   // the playhead continues past the loop boundary (exit & keep playing).
   const loopIterationRef = useRef(0)
+  const loopExhaustedRef = useRef(false)
   // Tracks the previous-frame AB-enable state to detect its rising edge.
   const wasABEnabledRef = useRef(false)
 
@@ -312,55 +346,110 @@ export function useBeatSync(
   const loopTargetsRef = useRef<LoopBlock[]>([])
   // Cursor into `loopTargetsRef` for the block currently being looped.
   const loopCursorRef = useRef(0)
+  // A multi-mode list click is an explicit block preference. It remains set
+  // while looping is off, then is consumed when the selected blocks are built.
+  const preferredMultiTargetRef = useRef<number | null>(null)
   // Serialised id list; lets the rAF loop cheaply detect a selection change and
   // rebuild `loopTargetsRef` + re-anchor the cursor without diffing each frame.
   const loopIdsKeyRef = useRef('')
   const loopConfigKey = `${loopMode}:${loopSegmentIds.join(',')}`
+  const abConfigKey = abLoop
+    ? `${abLoop.enabled}:${abLoop.aTime}:${abLoop.bTime}`
+    : 'none'
   // Isolated guard flag for the custom A→B loop's OWN programmatic seek-back,
   // kept separate from `seekingForLoopRef` so the two loop kinds never
   // mis-classify each other's seeks (T3 hardening).
   const seekingForAbRef = useRef(false)
+  const abSeekLandingRef = useRef<number | null>(null)
 
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
 
+    const anchorMultiTarget = (segmentIndex: number) => {
+      const idsKey = loopSegmentIdsRef.current.join(',')
+      if (idsKey !== loopIdsKeyRef.current) {
+        loopIdsKeyRef.current = idsKey
+        loopTargetsRef.current = buildLoopBlocks(
+          segments,
+          loopSegmentIdsRef.current,
+        )
+      }
+      const index = loopTargetsRef.current.findIndex((block) =>
+        block.segments.some((segment) => segment.index === segmentIndex),
+      )
+      if (index >= 0) loopCursorRef.current = index
+      return index >= 0
+    }
+
     const onSeeked = () => {
       const t = video.currentTime
-      if (seekingForLoopRef.current) {
-        // This is the loop's OWN programmatic loop-back (single OR multi). The
-        // landing point may differ by tens of ms from the requested loopStart
-        // (frame-level precision of a real <video>), which is now irrelevant
-        // because we know WHO initiated the seek via the guard flag. Just reset
-        // prevTime so the next frame does not re-detect the seam — do NOT
-        // re-lock the target, otherwise we would latch onto the previous phrase
-        // and cascade backward through the timeline. (multi: the new target was
-        // already set synchronously inside `tick`.)
-        seekingForLoopRef.current = false
-        prevTimeRef.current = t
-      } else if (seekingForAbRef.current) {
-        // This is the custom A→B loop's OWN programmatic seek-back. Isolated
-        // from the single/multi loop guard so the two never mis-classify each
-        // other's seeks (T3 hardening).
-        seekingForAbRef.current = false
+      const forcedTarget =
+        forceLoopTargetRef?.current ?? forcedTargetAwaitingSeekRef.current
+      if (forcedTarget !== null) {
+        // Explicit list/dot navigation is authoritative even when the decoded
+        // frame lands just before the segment boundary (e.g. 17.375999 for a
+        // requested 17.376). Never infer the target from that landing frame.
+        if (loopModeRef.current === 'single') {
+          loopTargetRef.current = forcedTarget
+        } else {
+          preferredMultiTargetRef.current = forcedTarget
+          if (anchorMultiTarget(forcedTarget) && loopRef.current) {
+            preferredMultiTargetRef.current = null
+          }
+        }
+        loopIterationRef.current = 0
+        loopExhaustedRef.current = false
+        forcedTargetAwaitingSeekRef.current = null
+        if (forceLoopTargetRef) forceLoopTargetRef.current = null
         prevTimeRef.current = t
       } else {
-        // Genuine user seek (or initial navigation): re-lock the single / multi
-        // loop target to whatever segment the playhead now sits in. For multi
-        // mode we also re-anchor the cursor onto the selected segment containing
-        // the new position (manual seek re-anchor). Using the same time for
-        // prev/cur yields no crossed boundary, so no phantom pulse either.
-        prevTimeRef.current = t
-        if (loopRef.current) {
-          const loc = locateBeat(segments, t, t)
-          loopTargetRef.current = loc.activeSegment || null
-          const idx = loopTargetsRef.current.findIndex((block) =>
-            block.segments.some((s) => s.index === loc.activeSegment),
-          )
-          if (idx >= 0) loopCursorRef.current = idx
+        const landingTolerance = Math.max(
+          0.1,
+          Math.min(0.35, beatDurationRef.current / 2),
+        )
+        const isLoopLanding =
+          loopSeekLandingRef.current !== null &&
+          Math.abs(t - loopSeekLandingRef.current) <= landingTolerance
+        const isAbLanding =
+          abSeekLandingRef.current !== null &&
+          Math.abs(t - abSeekLandingRef.current) <= landingTolerance
+        if (seekingForLoopRef.current || isLoopLanding) {
+          // This is the loop's OWN programmatic loop-back (single OR multi). The
+          // landing point may differ by tens of ms from the requested loopStart
+          // (frame-level precision of a real <video>), which is now irrelevant
+          // because we know WHO initiated the seek via the guard flag. Just reset
+          // prevTime so the next frame does not re-detect the seam — do NOT
+          // re-lock the target, otherwise we would latch onto the previous phrase
+          // and cascade backward through the timeline. (multi: the new target was
+          // already set synchronously inside `tick`.)
+          seekingForLoopRef.current = false
+          prevTimeRef.current = t
+        } else if (seekingForAbRef.current || isAbLanding) {
+          // This is the custom A→B loop's OWN programmatic seek-back. Isolated
+          // from the single/multi loop guard so the two never mis-classify each
+          // other's seeks (T3 hardening).
+          seekingForAbRef.current = false
+          prevTimeRef.current = t
+        } else {
+          // Genuine user seek (or initial navigation): re-lock the single / multi
+          // loop target to whatever segment the playhead now sits in. For multi
+          // mode we also re-anchor the cursor onto the selected segment containing
+          // the new position (manual seek re-anchor). Using the same time for
+          // prev/cur yields no crossed boundary, so no phantom pulse either.
+          loopSeekLandingRef.current = null
+          abSeekLandingRef.current = null
+          prevTimeRef.current = t
+          if (loopRef.current) {
+            const loc = locateBeat(segments, t, t)
+            loopTargetRef.current = loc.activeSegment || null
+            preferredMultiTargetRef.current = null
+            anchorMultiTarget(loc.activeSegment)
+          }
+          // Any genuine user reposition restarts the repetition count from zero.
+          loopIterationRef.current = 0
+          loopExhaustedRef.current = false
         }
-        // Any genuine user reposition restarts the repetition count from zero.
-        loopIterationRef.current = 0
       }
     }
     video.addEventListener('seeked', onSeeked)
@@ -373,11 +462,42 @@ export function useBeatSync(
         // Consume an explicit list-click target before any old loop clamp can
         // pull the playhead back to the previous segment.
         if (forceLoopTargetRef && forceLoopTargetRef.current !== null) {
+          const forcedTarget = forceLoopTargetRef.current
+          forcedTargetAwaitingSeekRef.current = forcedTarget
           if (loopModeRef.current === 'single') {
-            loopTargetRef.current = forceLoopTargetRef.current
-            loopIterationRef.current = 0
+            loopTargetRef.current = forcedTarget
+          } else {
+            preferredMultiTargetRef.current = forcedTarget
+            if (anchorMultiTarget(forcedTarget) && loopRef.current) {
+              preferredMultiTargetRef.current = null
+            }
           }
+          loopIterationRef.current = 0
+          loopExhaustedRef.current = false
           forceLoopTargetRef.current = null
+        }
+        const landingTolerance = Math.max(
+          0.1,
+          Math.min(0.35, beatDurationRef.current / 2),
+        )
+        // A real browser can occasionally omit or duplicate `seeked`. Retain
+        // the expected landing briefly (to absorb duplicates), then clear the
+        // in-flight guard once ordinary playback has moved safely away.
+        if (
+          loopSeekLandingRef.current !== null &&
+          !v.seeking &&
+          Math.abs(cur - loopSeekLandingRef.current) > landingTolerance
+        ) {
+          loopSeekLandingRef.current = null
+          seekingForLoopRef.current = false
+        }
+        if (
+          abSeekLandingRef.current !== null &&
+          !v.seeking &&
+          Math.abs(cur - abSeekLandingRef.current) > landingTolerance
+        ) {
+          abSeekLandingRef.current = null
+          seekingForAbRef.current = false
         }
         // Compare-mode (inactive): the shared <video> is shown side-by-side and
         // keeps playing. Do NOT issue any loop/AB seek+play — just keep the
@@ -413,6 +533,7 @@ export function useBeatSync(
           }
           // A freshly enabled single-segment loop starts a new repetition count.
           loopIterationRef.current = 0
+          loopExhaustedRef.current = false
         }
         // Always mirror the latest loop state every tick so we can detect the
         // next rising edge even when `seg` is null on this frame.
@@ -459,7 +580,10 @@ export function useBeatSync(
           // Detect the rising edge of AB enable so a newly enabled AB loop
           // starts its repetition count from zero.
           const abEnabled = !!(ab && ab.enabled && ab.bTime > ab.aTime)
-          if (abEnabled && !wasABEnabledRef.current) loopIterationRef.current = 0
+          if (abEnabled && !wasABEnabledRef.current) {
+            loopIterationRef.current = 0
+            loopExhaustedRef.current = false
+          }
           wasABEnabledRef.current = abEnabled
           if (ab && ab.enabled && ab.bTime > ab.aTime) {
             // Custom A→B loop (priority over single-segment loop). When the
@@ -468,23 +592,31 @@ export function useBeatSync(
             // re-detect `bTime` as crossed. The single-segment branch is skipped
             // entirely while AB is active, so the seek back into the earlier
             // segment can never re-trigger a padded loop and cascade backward.
-              if (prev < ab.bTime - AB_LOOP_EPS && ab.bTime <= cur) {
-                // Count this iteration; stop looping once the limit is reached.
-                loopIterationRef.current += 1
-                const reached =
-                  loopCountRef.current != null &&
-                  loopIterationRef.current >= loopCountRef.current
+            if (
+              !loopExhaustedRef.current &&
+              !v.seeking &&
+              !seekingForAbRef.current &&
+              cur + AB_LOOP_EPS >= ab.bTime
+            ) {
+              // Count this iteration; stop looping once the limit is reached.
+              loopIterationRef.current += 1
+              const reached =
+                loopCountRef.current != null &&
+                loopIterationRef.current >= loopCountRef.current
               if (!reached) {
                 // Mark as programmatic so the resulting `seeked` is not mistaken
                 // for a user drag (which would re-lock the single-segment target).
                 // Uses the ISOLATED AB guard (seekingForAbRef) so the AB loop
                 // never cross-talks with the single/multi loop guard (T3).
                 seekingForAbRef.current = true
+                abSeekLandingRef.current = ab.aTime
                 v.currentTime = ab.aTime
                 // A programmatic seek pauses the element internally; resume so the
                 // loop keeps running instead of freezing on the seam.
                 void v.play().catch(() => undefined)
                 newPrev = ab.aTime - AB_LOOP_EPS
+              } else {
+                loopExhaustedRef.current = true
               }
               // reached: leave newPrev = cur so the playhead continues past
               // bTime -> the loop exits and the video keeps playing forward.
@@ -513,10 +645,15 @@ export function useBeatSync(
                 loopCursorRef.current = 0
               }
               const loc = locateBeat(segments, cur, prev)
+              const preferredTarget = preferredMultiTargetRef.current
               const idx = loopTargetsRef.current.findIndex((block) =>
-                block.segments.some((s) => s.index === loc.activeSegment),
+                block.segments.some(
+                  (segment) =>
+                    segment.index === (preferredTarget ?? loc.activeSegment),
+                ),
               )
               if (idx >= 0) loopCursorRef.current = idx
+              preferredMultiTargetRef.current = null
             }
             const multi =
               loopModeRef.current === 'multi' &&
@@ -530,7 +667,12 @@ export function useBeatSync(
                   segments,
                   beatDurationRef.current,
                 )
-                if (prev < bounds.loopEnd - LOOP_EPS && bounds.loopEnd <= cur) {
+                if (
+                  !loopExhaustedRef.current &&
+                  !v.seeking &&
+                  !seekingForLoopRef.current &&
+                  cur + LOOP_EPS >= bounds.loopEnd
+                ) {
                   loopIterationRef.current += 1
                   const reached =
                     loopCountRef.current != null &&
@@ -547,9 +689,12 @@ export function useBeatSync(
                         )
                       : bounds
                     seekingForLoopRef.current = true
+                    loopSeekLandingRef.current = nextBounds.loopStart
                     v.currentTime = nextBounds.loopStart
                     void v.play().catch(() => undefined)
                     newPrev = nextBounds.loopStart - 0.001
+                  } else {
+                    loopExhaustedRef.current = true
                   }
                 }
               }
@@ -566,16 +711,24 @@ export function useBeatSync(
                   segments,
                   beatDurationRef.current,
                 )
-                if (prev < bounds.loopEnd - LOOP_EPS && bounds.loopEnd <= cur) {
+                if (
+                  !loopExhaustedRef.current &&
+                  !v.seeking &&
+                  !seekingForLoopRef.current &&
+                  cur + LOOP_EPS >= bounds.loopEnd
+                ) {
                   loopIterationRef.current += 1
                   const reached =
                     loopCountRef.current != null &&
                     loopIterationRef.current >= loopCountRef.current
                   if (!reached) {
                     seekingForLoopRef.current = true
+                    loopSeekLandingRef.current = bounds.loopStart
                     v.currentTime = bounds.loopStart
                     void v.play().catch(() => undefined)
                     newPrev = bounds.loopStart - 0.001
+                  } else {
+                    loopExhaustedRef.current = true
                   }
                 }
               }
@@ -587,6 +740,11 @@ export function useBeatSync(
             loopTargetsRef.current = []
             loopCursorRef.current = 0
             loopIdsKeyRef.current = ''
+            loopSeekLandingRef.current = null
+            abSeekLandingRef.current = null
+            seekingForLoopRef.current = false
+            seekingForAbRef.current = false
+            loopExhaustedRef.current = false
           }
           prevTimeRef.current = newPrev
         } else {
@@ -604,6 +762,15 @@ export function useBeatSync(
     }
   }, [segments, videoRef])
 
+  // A new AB range starts a fresh run. The primitive key avoids treating the
+  // equivalent object LessonPage creates on every render as a new range.
+  useEffect(() => {
+    loopIterationRef.current = 0
+    loopExhaustedRef.current = false
+    seekingForAbRef.current = false
+    abSeekLandingRef.current = null
+  }, [abConfigKey])
+
   // Re-arm the custom A→B loop when it is enabled but the playhead is already
   // past `bTime`: jump back to `aTime` so the loop starts cleanly instead of
   // waiting for the playhead to loop around the whole media (T3). The rising
@@ -618,18 +785,26 @@ export function useBeatSync(
     const video = videoRef.current
     if (!video) return
     if (!activeRef.current) return
-    const ab = abLoop
-    if (ab && ab.enabled && ab.bTime > ab.aTime && video.currentTime > ab.bTime) {
+    const ab = abLoopRef.current
+    if (
+      !loopExhaustedRef.current &&
+      ab &&
+      ab.enabled &&
+      ab.bTime > ab.aTime &&
+      video.currentTime > ab.bTime
+    ) {
       seekingForAbRef.current = true
+      abSeekLandingRef.current = ab.aTime
       video.currentTime = ab.aTime
       void video.play().catch(() => undefined)
     }
-  }, [abLoop, active, videoRef])
+  }, [abConfigKey, active, videoRef])
 
   // Reset the loop repetition counter whenever the limit changes (slider
   // drag / toggle) so a new count always starts counting from zero.
   useEffect(() => {
     loopIterationRef.current = 0
+    loopExhaustedRef.current = false
   }, [loopCount])
 
   // Changing between single- and multi-segment looping starts a fresh loop
@@ -641,6 +816,13 @@ export function useBeatSync(
     loopTargetsRef.current = []
     loopCursorRef.current = 0
     loopIdsKeyRef.current = ''
+    forcedTargetAwaitingSeekRef.current = null
+    loopSeekLandingRef.current = null
+    abSeekLandingRef.current = null
+    seekingForLoopRef.current = false
+    seekingForAbRef.current = false
+    loopExhaustedRef.current = false
+    if (loopMode !== 'multi') preferredMultiTargetRef.current = null
 
     const video = videoRef.current
     if (!loopRef.current || !video) {
