@@ -8,7 +8,9 @@ v1 的权威产品与实现说明是 `docs/PRD/PRD-v1.0-complete.md`，发布验
 
 前置条件：安装 Docker Desktop。
 
-1. 在 Finder 中双击 `start_local.command`。
+最省事的入口是双击桌面的 `打开舞蹈老师.command`。项目目录中也保留同名中文入口和 `start_local.command`。
+
+1. 双击 `打开舞蹈老师.command` 或 `start_local.command`。
 2. 脚本会在需要时打开 Docker Desktop，构建并启动前后端。
 3. 浏览器会自动打开 <http://localhost:8000>。
 

@@ -368,7 +368,7 @@ v1 没有账号和云同步；清理浏览器站点数据会清除浏览器端�
 
 ### 12.1 一键启动
 
-macOS 用户双击 `start_local.command`：
+macOS 用户双击中文入口 `打开舞蹈老师.command`（或原入口 `start_local.command`）：
 
 1. 转交给 `start_local.sh`。
 2. 检查 Docker CLI；如 Docker Desktop 未运行则自动打开并等待就绪。
