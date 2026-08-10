@@ -275,7 +275,10 @@ def get_video(taskId: str) -> FileResponse:
         ".webm": "video/webm",
         ".mov": "video/quicktime",
     }.get(os.path.splitext(task.video_path)[1].lower(), "video/mp4")
-    return FileResponse(task.video_path, media_type=media, filename=task.video_name)
+    # This route is a media source, not a download action. Omitting `filename`
+    # prevents Starlette from adding `Content-Disposition: attachment`, which
+    # can make remote Safari/Chrome defer or reject metadata loading.
+    return FileResponse(task.video_path, media_type=media)
 
 
 def _safe_remove(path: str) -> None:

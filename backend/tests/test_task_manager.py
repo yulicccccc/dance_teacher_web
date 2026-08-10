@@ -43,6 +43,25 @@ def test_pipeline_runs_to_done(tmp_path, monkeypatch):
     assert task.segments[0].index == 1
 
 
+def test_pipeline_uses_stream_prepared_video(tmp_path, monkeypatch):
+    used_paths: list[str] = []
+    monkeypatch.setattr(
+        tm_mod, "prepare_for_streaming", lambda vp: "/tmp/dance.stream.mp4"
+    )
+    monkeypatch.setattr(
+        tm_mod, "extract", lambda vp: used_paths.append(vp) or "/tmp/fake.wav"
+    )
+    monkeypatch.setattr(
+        tm_mod, "detect", lambda wp: (120.0, 0.9, list(FAKE_BEATS), FAKE_DURATION)
+    )
+    tm = TaskManager(tasks_dir=str(tmp_path))
+    tid = tm.create_task(video_name="dance.mov", video_path="/tmp/dance.mov")
+
+    assert _wait_for(tm, tid, ("done", "failed")) == "done"
+    assert used_paths == ["/tmp/dance.stream.mp4"]
+    assert tm.get_status(tid).video_path == "/tmp/dance.stream.mp4"
+
+
 def test_pipeline_failure_sets_failed(tmp_path, monkeypatch):
     monkeypatch.setattr(tm_mod, "extract", lambda vp: (_ for _ in ()).throw(RuntimeError("ffmpeg boom")))
     tm = TaskManager(tasks_dir=str(tmp_path))

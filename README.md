@@ -1,8 +1,12 @@
-# 舞蹈老师 Web · v1.0.0
+# 舞蹈老师 Web · v1.0.1
 
 把本地舞蹈视频自动分析成按 8 拍划分的教学课，并提供慢放、数拍、镜像、学习进度和三种可靠循环。
 
-v1 的权威产品与实现说明是 `docs/PRD/PRD-v1.0-complete.md`，发布验收记录是 `docs/releases/v1.0.0.md`。
+v1 的权威产品与实现说明是 `docs/PRD/PRD-v1.0-complete.md`，发布验收记录在 `docs/releases/`。
+
+## 在线版
+
+完整 Docker 版部署在 <https://dance-teacher-web.onrender.com>。免费实例闲置后会休眠，第一次打开可能需要约 50 秒唤醒；页面会自动等待，不需要操作终端。
 
 ## 最方便的本地启动方式
 

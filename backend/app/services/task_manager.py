@@ -23,6 +23,7 @@ from ..schemas.analysis import Segment
 from . import segmenter
 from .audio_extractor import extract
 from .beat_detector import detect
+from .video_preparer import prepare_for_streaming
 
 
 class TaskManager:
@@ -170,6 +171,11 @@ class TaskManager:
             return
         try:
             self._update(task, "extracting", 10)
+            prepared_path = prepare_for_streaming(task.video_path)
+            if prepared_path != task.video_path:
+                task.video_path = prepared_path
+                with self._lock:
+                    self._save(task)
             wav_path = extract(task.video_path)
             task.wav_path = wav_path
 
