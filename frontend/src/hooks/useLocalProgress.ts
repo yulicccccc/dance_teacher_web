@@ -63,7 +63,12 @@ export function sortSegments(arr: number[]): number[] {
 export function normalizeLessonProgress(raw: LegacyLessonProgress): LessonProgress {
   const abLoop = raw.abLoop ?? null
   const loopMode: LoopMode =
-    raw.loopMode === 'single' || raw.loopMode === 'multi' || raw.loopMode === 'ab'
+    raw.loopMode === 'current' ||
+    raw.loopMode === 'front' ||
+    raw.loopMode === 'back' ||
+    raw.loopMode === 'single' ||
+    raw.loopMode === 'multi' ||
+    raw.loopMode === 'ab'
       ? raw.loopMode
       : abLoop?.enabled
         ? 'ab'
@@ -72,6 +77,9 @@ export function normalizeLessonProgress(raw: LegacyLessonProgress): LessonProgre
   const requestedEnabled =
     raw.loopEnabled ?? raw.loopSegment ?? Boolean(abLoop?.enabled)
   const validForMode =
+    loopMode === 'current' ||
+    loopMode === 'front' ||
+    loopMode === 'back' ||
     loopMode === 'single' ||
     (loopMode === 'multi' && loopSegmentIds.length > 0) ||
     (loopMode === 'ab' && abLoop != null && abLoop.aTime < abLoop.bTime)

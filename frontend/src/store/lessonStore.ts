@@ -1,8 +1,14 @@
 import { create } from 'zustand'
 import type { ABLoop } from '../types/api'
 
-/** The three mutually exclusive loop modes from the loop-redesign PRD. */
-export type LoopMode = 'single' | 'multi' | 'ab'
+/** Fine-grained modes lock one beat or one half of the current 8-count. */
+export type FocusedLoopMode = 'current' | 'front' | 'back' | 'single'
+/** All mutually exclusive loop modes shown in the lesson control bar. */
+export type LoopMode = FocusedLoopMode | 'multi' | 'ab'
+
+export function isFocusedLoopMode(mode: LoopMode): mode is FocusedLoopMode {
+  return mode === 'current' || mode === 'front' || mode === 'back' || mode === 'single'
+}
 
 function validAB(abLoop: ABLoop | null): boolean {
   return abLoop != null && abLoop.aTime < abLoop.bTime
@@ -15,7 +21,7 @@ export interface LessonState {
   mirror: boolean
   /** Beat-overlay mirror, intentionally independent from the video image. */
   beatMirror: boolean
-  /** One master switch shared by single, multi and AB modes. */
+  /** One master switch shared by every loop mode. */
   loopEnabled: boolean
   loopMode: LoopMode
   loopSegmentIds: number[]

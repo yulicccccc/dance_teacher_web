@@ -150,10 +150,114 @@ export function computePaddedLoopBounds(
   return { loopStart, loopEnd }
 }
 
+export type SectionLoopMode = 'front' | 'back' | 'single'
+
+function displayedBeatTime(segment: Segment, beat: number): number | undefined {
+  const index = beat - (segment.startBeat ?? 1)
+  return index >= 0 ? segment.beats[index] : undefined
+}
+
+/**
+ * Compute a half-phrase practice window while preserving one beat of context.
+ *
+ * `front`: previous 8 -> current 1..4 -> current 5 (ends at beat 6 boundary)
+ * `back`:  current 4 -> current 5..8 -> next 1 (ends at next beat 2 boundary)
+ * `single` delegates to the original full-phrase padded loop unchanged.
+ */
+export function computeSectionLoopBounds(
+  target: Segment,
+  segments: Segment[],
+  beatDuration: number,
+  mode: SectionLoopMode,
+): PaddedLoopBounds {
+  if (mode === 'single') return computePaddedLoopBounds(target, segments, beatDuration)
+
+  const idx = segments.indexOf(target)
+  const prev = idx > 0 ? segments[idx - 1] : null
+  const next = idx >= 0 && idx < segments.length - 1 ? segments[idx + 1] : null
+  const mediaStart = segments[0]?.startTime ?? target.startTime
+  const mediaEnd = segments[segments.length - 1]?.endTime ?? target.endTime
+  const safeBeat = Number.isFinite(beatDuration) && beatDuration > 0 ? beatDuration : 0
+
+  let loopStart: number
+  let loopEnd: number
+  if (mode === 'front') {
+    loopStart = prev
+      ? displayedBeatTime(prev, 8) ??
+        prev.beats[prev.beats.length - 1] ??
+        target.startTime - safeBeat
+      : target.startTime
+    loopEnd =
+      displayedBeatTime(target, 6) ??
+      (target.beats.length > 0
+        ? target.endTime
+        : Math.min(target.endTime, target.startTime + safeBeat * 5))
+  } else {
+    loopStart =
+      displayedBeatTime(target, 4) ??
+      (target.beats.length > 0
+        ? target.startTime
+        : Math.min(target.endTime, target.startTime + safeBeat * 3))
+    loopEnd =
+      (next
+        ? displayedBeatTime(next, 2) ??
+          (next.beats.length > 0
+            ? next.endTime
+            : Math.min(mediaEnd, target.endTime + safeBeat))
+        : mediaEnd)
+  }
+
+  loopStart = Math.max(mediaStart, Math.min(loopStart, mediaEnd))
+  loopEnd = Math.max(mediaStart, Math.min(loopEnd, mediaEnd))
+  return loopEnd > loopStart
+    ? { loopStart, loopEnd }
+    : { loopStart: target.startTime, loopEnd: target.endTime }
+}
+
+/**
+ * Three-beat action drill: previous beat + beat at the playhead + next beat.
+ * `loopEnd` is the following beat boundary, so all three intervals play fully.
+ */
+export function computeCurrentBeatLoopBounds(
+  segments: Segment[],
+  currentTime: number,
+  beatDuration: number,
+): PaddedLoopBounds {
+  if (segments.length === 0) return { loopStart: 0, loopEnd: 0 }
+  const mediaStart = segments[0].startTime
+  const mediaEnd = segments[segments.length - 1].endTime
+  const beats = segments
+    .flatMap((segment) => segment.beats)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b)
+    .filter((beat, index, all) => index === 0 || Math.abs(beat - all[index - 1]) > 1e-9)
+  if (beats.length === 0) {
+    const safeBeat = Number.isFinite(beatDuration) && beatDuration > 0 ? beatDuration : 0
+    return {
+      loopStart: Math.max(mediaStart, currentTime - safeBeat),
+      loopEnd: Math.min(mediaEnd, currentTime + safeBeat * 2),
+    }
+  }
+
+  let currentIndex = 0
+  for (let index = 0; index < beats.length; index += 1) {
+    if (beats[index] <= currentTime + 1e-9) currentIndex = index
+    else break
+  }
+  const loopStart = currentIndex > 0 ? beats[currentIndex - 1] : mediaStart
+  const loopEnd = beats[currentIndex + 2] ?? mediaEnd
+  return {
+    loopStart: Math.max(mediaStart, loopStart),
+    loopEnd: Math.min(mediaEnd, Math.max(loopEnd, loopStart)),
+  }
+}
+
 /** A contiguous run of selected segments treated as one loop block. */
 export interface LoopBlock {
   segments: Segment[]
 }
+
+export type LoopEngineMode = 'current' | 'front' | 'back' | 'single' | 'multi'
 
 /** Group selected segment ids into contiguous blocks in timeline order. */
 export function buildLoopBlocks(segments: Segment[], ids: number[]): LoopBlock[] {
@@ -233,12 +337,11 @@ export function useBeatSync(
   abLoop: ABLoop | null = null,
   loopCount: number | null = null,
   /**
-   * Loop flavour (Part 2). `'single'` loops the segment the playhead is in
-   * (classic behaviour); `'multi'` cycles through the subset of segments the
-   * user ticked in `loopSegmentIds`, each padded, wrapping the last back to the
-   * first. Defaults to `'single'` so every existing caller is unaffected.
+   * Loop flavour. `current` drills one beat with adjacent context; `front` and
+   * `back` drill half a phrase; `single` drills the full phrase; `multi` cycles
+   * through the selected phrase blocks.
    */
-  loopMode: 'single' | 'multi' = 'single',
+  loopMode: LoopEngineMode = 'single',
   /** Segment indices (1-based, matching `Segment.index`) ticked for multi-loop. */
   loopSegmentIds: number[] = [],
   /**
@@ -268,6 +371,11 @@ export function useBeatSync(
   // the previous segment) cannot re-trigger a loop and cascade backward.
   // Cleared whenever looping is disabled so it re-acquires on the next enable.
   const loopTargetRef = useRef<number | null>(null)
+  // `current` mode targets one beat rather than only a phrase. Store the
+  // playhead time used to acquire that beat; the pure bounds helper snaps it to
+  // the nearest real beat at/before this time. Programmatic loop-back never
+  // changes it, while a genuine seek deliberately re-locks it.
+  const currentBeatTargetTimeRef = useRef<number | null>(null)
   // A segment-list click writes `forceLoopTargetRef` immediately before it
   // seeks. Depending on the browser, rAF may consume that value before OR after
   // `seeked`. Keep a second copy until `seeked` settles so a frame landing a few
@@ -332,6 +440,7 @@ export function useBeatSync(
   // empty selection degrades to the classic single-segment loop.
   const loopModeRef = useRef(loopMode)
   loopModeRef.current = loopMode
+  const previousLoopModeRef = useRef(loopMode)
   // The current multi-segment selection (mirrors the `loopSegmentIds` prop).
   const loopSegmentIdsRef = useRef(loopSegmentIds)
   loopSegmentIdsRef.current = loopSegmentIds
@@ -388,8 +497,12 @@ export function useBeatSync(
         // Explicit list/dot navigation is authoritative even when the decoded
         // frame lands just before the segment boundary (e.g. 17.375999 for a
         // requested 17.376). Never infer the target from that landing frame.
-        if (loopModeRef.current === 'single') {
+        if (loopModeRef.current !== 'multi') {
           loopTargetRef.current = forcedTarget
+          if (loopModeRef.current === 'current') {
+            const target = segments.find((segment) => segment.index === forcedTarget)
+            currentBeatTargetTimeRef.current = target?.beats[0] ?? target?.startTime ?? t
+          }
         } else {
           preferredMultiTargetRef.current = forcedTarget
           if (anchorMultiTarget(forcedTarget) && loopRef.current) {
@@ -441,6 +554,7 @@ export function useBeatSync(
           if (loopRef.current) {
             const loc = locateBeat(segments, t, t)
             loopTargetRef.current = loc.activeSegment || null
+            if (loopModeRef.current === 'current') currentBeatTargetTimeRef.current = t
             preferredMultiTargetRef.current = null
             anchorMultiTarget(loc.activeSegment)
           }
@@ -462,8 +576,13 @@ export function useBeatSync(
         if (forceLoopTargetRef && forceLoopTargetRef.current !== null) {
           const forcedTarget = forceLoopTargetRef.current
           forcedTargetAwaitingSeekRef.current = forcedTarget
-          if (loopModeRef.current === 'single') {
+          if (loopModeRef.current !== 'multi') {
             loopTargetRef.current = forcedTarget
+            if (loopModeRef.current === 'current') {
+              const target = segments.find((segment) => segment.index === forcedTarget)
+              currentBeatTargetTimeRef.current =
+                target?.beats[0] ?? target?.startTime ?? cur
+            }
           } else {
             preferredMultiTargetRef.current = forcedTarget
             if (anchorMultiTarget(forcedTarget) && loopRef.current) {
@@ -528,6 +647,7 @@ export function useBeatSync(
           if (!(loopModeRef.current === 'multi' && loopSegmentIdsRef.current.length > 0)) {
             loopTargetRef.current = realSegIndex
           }
+          if (loopModeRef.current === 'current') currentBeatTargetTimeRef.current = cur
           // A freshly enabled single-segment loop starts a new repetition count.
           loopIterationRef.current = 0
           loopExhaustedRef.current = false
@@ -696,37 +816,56 @@ export function useBeatSync(
                 }
               }
             } else {
-              if (loopTargetRef.current === null) {
-                const leftSeg = computeLoopSegment(segments, prev, cur)
-                if (leftSeg) loopTargetRef.current = leftSeg.index
-              }
-              const target =
-                segments.find((s) => s.index === loopTargetRef.current) ?? null
-              if (target) {
-                const bounds = computePaddedLoopBounds(
-                  target,
+              let bounds: PaddedLoopBounds | null = null
+              if (loopModeRef.current === 'current') {
+                if (currentBeatTargetTimeRef.current === null) {
+                  currentBeatTargetTimeRef.current = cur
+                }
+                bounds = computeCurrentBeatLoopBounds(
                   segments,
+                  currentBeatTargetTimeRef.current,
                   beatDurationRef.current,
                 )
-                if (
-                  !loopExhaustedRef.current &&
-                  !v.seeking &&
-                  !seekingForLoopRef.current &&
-                  cur + LOOP_EPS >= bounds.loopEnd
-                ) {
-                  loopIterationRef.current += 1
-                  const reached =
-                    loopCountRef.current != null &&
-                    loopIterationRef.current >= loopCountRef.current
-                  if (!reached) {
-                    seekingForLoopRef.current = true
-                    loopSeekLandingRef.current = bounds.loopStart
-                    v.currentTime = bounds.loopStart
-                    void v.play().catch(() => undefined)
-                    newPrev = bounds.loopStart - 0.001
-                  } else {
-                    loopExhaustedRef.current = true
-                  }
+              } else {
+                if (loopTargetRef.current === null) {
+                  const leftSeg = computeLoopSegment(segments, prev, cur)
+                  if (leftSeg) loopTargetRef.current = leftSeg.index
+                }
+                const target =
+                  segments.find((s) => s.index === loopTargetRef.current) ?? null
+                if (target) {
+                  const sectionMode: SectionLoopMode =
+                    loopModeRef.current === 'front' || loopModeRef.current === 'back'
+                      ? loopModeRef.current
+                      : 'single'
+                  bounds = computeSectionLoopBounds(
+                    target,
+                    segments,
+                    beatDurationRef.current,
+                    sectionMode,
+                  )
+                }
+              }
+              if (
+                bounds &&
+                bounds.loopEnd > bounds.loopStart &&
+                !loopExhaustedRef.current &&
+                !v.seeking &&
+                !seekingForLoopRef.current &&
+                cur + LOOP_EPS >= bounds.loopEnd
+              ) {
+                loopIterationRef.current += 1
+                const reached =
+                  loopCountRef.current != null &&
+                  loopIterationRef.current >= loopCountRef.current
+                if (!reached) {
+                  seekingForLoopRef.current = true
+                  loopSeekLandingRef.current = bounds.loopStart
+                  v.currentTime = bounds.loopStart
+                  void v.play().catch(() => undefined)
+                  newPrev = bounds.loopStart - 0.001
+                } else {
+                  loopExhaustedRef.current = true
                 }
               }
             }
@@ -734,6 +873,7 @@ export function useBeatSync(
             // Looping disabled -> drop the locked target and the multi state so
             // they re-acquire on the next enable.
             loopTargetRef.current = null
+            currentBeatTargetTimeRef.current = null
             loopTargetsRef.current = []
             loopCursorRef.current = 0
             loopIdsKeyRef.current = ''
@@ -807,6 +947,8 @@ export function useBeatSync(
   // can remain latched after switching back to single mode and pull playback
   // to the wrong phrase.
   useEffect(() => {
+    const previousMode = previousLoopModeRef.current
+    previousLoopModeRef.current = loopMode
     loopIterationRef.current = 0
     loopTargetsRef.current = []
     loopCursorRef.current = 0
@@ -822,14 +964,23 @@ export function useBeatSync(
     const video = videoRef.current
     if (!loopRef.current || !video) {
       loopTargetRef.current = null
+      currentBeatTargetTimeRef.current = null
       return
     }
     if (loopMode === 'multi' && loopSegmentIds.length > 0) {
       loopTargetRef.current = null
+      currentBeatTargetTimeRef.current = null
       return
     }
-    const loc = locateBeat(segments, video.currentTime, video.currentTime)
-    loopTargetRef.current = loc.activeSegment || null
+    // Switching among current/front/back/single while the playhead is in a
+    // padded lead/trail beat must keep the learner's selected section. Only a
+    // transition out of multi (or an absent target) re-acquires by playhead.
+    if (previousMode === 'multi' || loopTargetRef.current === null) {
+      const loc = locateBeat(segments, video.currentTime, video.currentTime)
+      loopTargetRef.current = loc.activeSegment || null
+    }
+    currentBeatTargetTimeRef.current =
+      loopMode === 'current' ? video.currentTime : null
   }, [loopConfigKey, loopMode, loopSegmentIds.length, segments, videoRef])
 
   /**

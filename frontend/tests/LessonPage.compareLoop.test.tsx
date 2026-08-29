@@ -96,13 +96,14 @@ async function renderLesson(loopMode: LoopMode) {
 describe('LessonPage — 对照录制保留循环', () => {
   beforeEach(() => useBeatSyncSpy.mockClear())
 
-  for (const mode of ['single', 'multi', 'ab'] as const) {
+  for (const mode of ['current', 'front', 'back', 'single', 'multi', 'ab'] as const) {
     it(`${mode} 模式进入对照练习后循环引擎仍保持 active`, async () => {
       const { latestBeatSyncArgs, cleanup } = await renderLesson(mode)
 
       // useBeatSync 第 11 个参数是引擎 active 开关。对照录制复用同一个
-      // teacher <video>，因此它必须继续为 true，三个循环模式才能照常回跳。
+      // teacher <video>，因此它必须继续为 true，六档循环模式才能照常回跳。
       expect(latestBeatSyncArgs[10]).toBe(true)
+      expect(latestBeatSyncArgs[8]).toBe(mode === 'ab' ? 'single' : mode)
 
       cleanup()
     })

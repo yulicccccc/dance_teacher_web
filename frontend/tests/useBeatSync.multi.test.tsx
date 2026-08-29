@@ -76,7 +76,7 @@ interface Props {
   loop: boolean
   offset: number
   beatDuration: number
-  loopMode: 'single' | 'multi'
+  loopMode: 'current' | 'front' | 'back' | 'single' | 'multi'
   loopSegmentIds: number[]
   active?: boolean
   forceLoopTargetRef?: MutableRefObject<number | null>
@@ -135,6 +135,142 @@ function drive(
 }
 
 describe('useBeatSync — multi-segment loop (Part 2)', () => {
+  it('current mode loops the locked beat with one beat of context on each side', () => {
+    const { video, timeLog, root, container } = setup({
+      segments: makeSegments(),
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+      loopMode: 'current',
+      loopSegmentIds: [],
+    })
+    act(() => {
+      video.currentTime = 5.1 // segment 2, beat 3
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+
+    const loopBacks: number[] = []
+    drive(video, timeLog, 5.1, 500, 0.01, (time) => loopBacks.push(time))
+    expect(loopBacks.length).toBeGreaterThanOrEqual(3)
+    expect(loopBacks.every((time) => Math.abs(time - 4.5) < 1e-3)).toBe(true)
+    root.unmount()
+    container.remove()
+  })
+
+  it('current mode re-locks to a new action after a genuine user seek', () => {
+    const { video, timeLog, root, container } = setup({
+      segments: makeSegments(),
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+      loopMode: 'current',
+      loopSegmentIds: [],
+    })
+    act(() => {
+      video.currentTime = 5.1
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+
+    // Move to beat 6 (6.5s): the new three-beat window is 6.0..7.5.
+    act(() => {
+      video.currentTime = 6.6
+      video.dispatchEvent(new Event('seeked'))
+    })
+    const loopBacks: number[] = []
+    drive(video, timeLog, 6.6, 100, 0.01, (time) => loopBacks.push(time))
+    expect(loopBacks.some((time) => Math.abs(time - 6) < 1e-3)).toBe(true)
+    expect(loopBacks.some((time) => Math.abs(time - 4.5) < 1e-3)).toBe(false)
+    root.unmount()
+    container.remove()
+  })
+
+  it('front mode loops previous beat 8 through current beat 5', () => {
+    const { video, timeLog, root, container } = setup({
+      segments: makeSegments(),
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+      loopMode: 'front',
+      loopSegmentIds: [],
+    })
+    act(() => {
+      video.currentTime = 5.1
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+
+    const loopBacks: number[] = []
+    drive(video, timeLog, 5.1, 160, 0.01, (time) => loopBacks.push(time))
+    expect(loopBacks.some((time) => Math.abs(time - 3.5) < 1e-3)).toBe(true)
+    root.unmount()
+    container.remove()
+  })
+
+  it('back mode loops current beat 4 through next beat 1', () => {
+    const { video, timeLog, root, container } = setup({
+      segments: makeSegments(),
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+      loopMode: 'back',
+      loopSegmentIds: [],
+    })
+    act(() => {
+      video.currentTime = 6
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+
+    const loopBacks: number[] = []
+    drive(video, timeLog, 6, 270, 0.01, (time) => loopBacks.push(time))
+    expect(loopBacks.some((time) => Math.abs(time - 5.5) < 1e-3)).toBe(true)
+    expect(loopBacks.some((time) => Math.abs(time - 3.5) < 1e-3)).toBe(false)
+    root.unmount()
+    container.remove()
+  })
+
+  it('switching focused modes during a lead-in keeps the selected section target', () => {
+    const segments = makeSegments()
+    const { videoRef, video, timeLog, root, container } = setup({
+      segments,
+      loop: true,
+      offset: 0,
+      beatDuration: 0.5,
+      loopMode: 'front',
+      loopSegmentIds: [],
+    })
+    act(() => {
+      video.currentTime = 5.1 // lock section 2
+      video.dispatchEvent(new Event('seeked'))
+    })
+    step()
+
+    // The front loop has returned to section 1's beat 8 lead-in. Switching to
+    // back must still mean "back half of selected section 2", not section 1.
+    act(() => {
+      video.currentTime = 3.6
+      root.render(
+        <Harness
+          videoRef={videoRef}
+          segments={segments}
+          loop={true}
+          offset={0}
+          beatDuration={0.5}
+          loopMode="back"
+          loopSegmentIds={[]}
+        />,
+      )
+    })
+    const loopBacks: number[] = []
+    drive(video, timeLog, 3.6, 500, 0.01, (time) => loopBacks.push(time))
+    expect(loopBacks.some((time) => Math.abs(time - 5.5) < 1e-3)).toBe(true)
+    expect(loopBacks.some((time) => Math.abs(time - 1.5) < 1e-3)).toBe(false)
+    root.unmount()
+    container.remove()
+  })
+
   it('consumes a clicked single-loop target before the old target can clamp it back', () => {
     const forceLoopTargetRef = { current: null } as MutableRefObject<number | null>
     const { video, timeLog, root, container } = setup({

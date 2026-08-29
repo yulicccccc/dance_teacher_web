@@ -17,7 +17,7 @@ import { useVideoControls } from '../hooks/useVideoControls'
 import { locateBeat, useBeatSync } from '../hooks/useBeatSync'
 import { usePlayPauseSync } from '../hooks/usePlayPauseSync'
 import { useLocalProgress, type LessonProgress } from '../hooks/useLocalProgress'
-import { useLessonStore } from '../store/lessonStore'
+import { isFocusedLoopMode, useLessonStore } from '../store/lessonStore'
 import VideoPlayer from '../components/VideoPlayer'
 import SegmentList from '../components/SegmentList'
 import ControlBar from '../components/ControlBar'
@@ -83,7 +83,7 @@ export default function LessonPage() {
   const addPracticeSeconds = useLessonStore((s) => s.addPracticeSeconds)
   const setLearnedSegments = useLessonStore((s) => s.setLearnedSegments)
   const forceLoopTargetRef = useRef<number | null>(null)
-  const wasSingleLoopActiveRef = useRef(false)
+  const wasFocusedLoopActiveRef = useRef(false)
 
   const segments = result?.segments ?? []
 
@@ -121,33 +121,33 @@ export default function LessonPage() {
       // The one-beat lead/trail belongs to the selected loop, but it physically
       // sits in the neighbouring segments. Keep the selected target highlighted
       // instead of making the UI bounce 5 -> 4 -> 5 -> 6 on every repetition.
-      if (state.loopEnabled && state.loopMode === 'single') return
+      if (state.loopEnabled && isFocusedLoopMode(state.loopMode)) return
       setSegment(i)
     },
     abLoopForEngine,
     loopCount,
-    loopMode === 'multi' ? 'multi' : 'single',
+    loopMode === 'ab' ? 'single' : loopMode,
     loopMode === 'multi' ? loopSegmentIds : [],
     // Compare-mode draws this SAME <video> into the recording canvas. Keep the
-    // loop engine active so single, multi and A→B loops continue while the
+    // loop engine active so all six loop modes continue while the
     // learner records as many repetitions as they want.
     true,
     forceLoopTargetRef,
   )
 
-  // When single-loop ends (or the user switches to multi/AB), immediately hand
+  // When a focused loop ends (or the user switches to multi/AB), immediately hand
   // the header/list back to the real playhead segment. This only runs on the
-  // transition out of single-loop, so it cannot disturb saved-position resume.
+  // transition out of focused looping, so it cannot disturb saved-position resume.
   useEffect(() => {
-    const singleActive = loopEnabled && loopMode === 'single'
-    if (wasSingleLoopActiveRef.current && !singleActive) {
+    const focusedActive = loopEnabled && isFocusedLoopMode(loopMode)
+    if (wasFocusedLoopActiveRef.current && !focusedActive) {
       const v = videoRef.current
       if (v) {
         const loc = locateBeat(offsetSegments, v.currentTime, v.currentTime)
         if (loc.activeSegment) setSegment(loc.activeSegment)
       }
     }
-    wasSingleLoopActiveRef.current = singleActive
+    wasFocusedLoopActiveRef.current = focusedActive
   }, [loopEnabled, loopMode, offsetSegments, setSegment, videoRef])
 
   // Fetch result + hydrate progress from local storage.
@@ -349,7 +349,7 @@ export default function LessonPage() {
   const goToSegment = (index: number) => {
     const seg = offsetSegments.find((s) => s.index === index)
     if (!seg) return
-    if (loopMode === 'single') {
+    if (isFocusedLoopMode(loopMode)) {
       // PRD: clicking a segment means "loop this segment" immediately. The
       // imperative target prevents the next animation frame from restoring the
       // previous segment before the media seeked event arrives.
@@ -389,7 +389,7 @@ export default function LessonPage() {
     }
     if (resetMulti) setLoopSegmentIds([])
     if (resetLearned) setLearnedSegments([])
-    if (loopEnabled && loopMode === 'single') {
+    if (loopEnabled && isFocusedLoopMode(loopMode) && loopMode !== 'current') {
       forceLoopTargetRef.current = nextSegment
     }
     setBeatOffset(nextOffset)
@@ -406,23 +406,26 @@ export default function LessonPage() {
     )
   }
 
-  const lockSingleLoopToTime = (time: number) => {
-    if (!(loopEnabled && loopMode === 'single')) return
+  const lockFocusedLoopToTime = (time: number) => {
+    if (!(loopEnabled && isFocusedLoopMode(loopMode))) return
     const loc = locateBeat(offsetSegments, time, time)
     if (!loc.activeSegment) return
-    forceLoopTargetRef.current = loc.activeSegment
+    // `current` targets the exact beat under the playhead; its `seeked` event
+    // performs that beat-level lock. The section modes use the explicit segment
+    // channel so decoded frames just before a boundary cannot select the prior section.
+    if (loopMode !== 'current') forceLoopTargetRef.current = loc.activeSegment
     setSegment(loc.activeSegment)
   }
 
   const handleSeekTime = (time: number) => {
-    lockSingleLoopToTime(time)
+    lockFocusedLoopToTime(time)
     seek(time)
   }
 
   const handleStepBeat = (dir: 1 | -1) => {
     stepBeat(dir)
     const v = videoRef.current
-    if (v) lockSingleLoopToTime(v.currentTime)
+    if (v) lockFocusedLoopToTime(v.currentTime)
   }
 
   const handlePrev = () => {
@@ -568,7 +571,11 @@ export default function LessonPage() {
                 setLoopSegmentIds(offsetSegments.map((segment) => segment.index))
               }
               onClearSelection={() => setLoopSegmentIds([])}
-              showLoopBounds={loopMode === 'single'}
+              loopBoundsMode={
+                loopMode === 'front' || loopMode === 'back' || loopMode === 'single'
+                  ? loopMode
+                  : undefined
+              }
               beatDuration={beatDuration}
             />
           </Box>

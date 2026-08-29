@@ -11,7 +11,10 @@ import {
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import type { Segment } from '../types/api'
 import { formatDuration } from '../utils/format'
-import { computePaddedLoopBounds } from '../hooks/useBeatSync'
+import {
+  computeSectionLoopBounds,
+  type SectionLoopMode,
+} from '../hooks/useBeatSync'
 
 interface Props {
   segments: Segment[]
@@ -26,6 +29,8 @@ interface Props {
   onClearSelection?: () => void
   /** In single mode, show the exact padded playback window for every segment. */
   showLoopBounds?: boolean
+  /** Fine-practice/full-section mode used to calculate the displayed seconds. */
+  loopBoundsMode?: SectionLoopMode
   beatDuration?: number
 }
 
@@ -41,6 +46,7 @@ export default function SegmentList({
   onSelectAll,
   onClearSelection,
   showLoopBounds = false,
+  loopBoundsMode,
   beatDuration = 0,
 }: Props) {
   return (
@@ -64,8 +70,9 @@ export default function SegmentList({
           const isCurrent = seg.index === currentSegment
           const learned = learnedSegments.includes(seg.index)
           const selectedForLoop = selectedLoopIds.includes(seg.index)
-          const loopBounds = showLoopBounds
-            ? computePaddedLoopBounds(seg, segments, beatDuration)
+          const resolvedBoundsMode = loopBoundsMode ?? (showLoopBounds ? 'single' : null)
+          const loopBounds = resolvedBoundsMode
+            ? computeSectionLoopBounds(seg, segments, beatDuration, resolvedBoundsMode)
             : null
           const firstBeat = seg.startBeat ?? 1
           const lastBeat = firstBeat + seg.beats.length - 1

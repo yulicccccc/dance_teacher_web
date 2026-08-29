@@ -4,6 +4,8 @@ import {
   computeLoopSegment,
   computePaddedLoopBounds,
   computePaddedLoopBoundsForBlock,
+  computeCurrentBeatLoopBounds,
+  computeSectionLoopBounds,
   buildLoopBlocks,
 } from '../src/hooks/useBeatSync'
 import { findBeatAt, resegmentSegments } from '../src/utils/segmentMath'
@@ -235,6 +237,122 @@ describe('computePaddedLoopBounds — 前后各一拍 padding', () => {
     const r = computePaddedLoopBounds(segs[2], segs, 0.5) // window 8-12, prev 4-8
     expect(r.loopStart).toBeLessThan(segs[2].startTime) // 7.5 < 8
     expect(r.loopStart).toBeGreaterThanOrEqual(segs[1].startTime) // >= 4
+  })
+})
+
+describe('四拍 / 单拍精练循环区间', () => {
+  const segs = makeUniformSegments(4)
+
+  it('当前：上一拍 + 当前拍 + 下一拍，共播放三个完整拍子', () => {
+    // t=5.1 位于第 2 节第 3 拍（5.0）：从第 2 拍 4.5 开始，
+    // 到第 5 拍 6.0 边界回跳，实际播放第 2/3/4 拍。
+    expect(computeCurrentBeatLoopBounds(segs, 5.1, 0.5)).toEqual({
+      loopStart: 4.5,
+      loopEnd: 6,
+    })
+  })
+
+  it('当前：跨小节时仍使用真实相邻拍点', () => {
+    // 当前 = 第 2 节第 8 拍（7.5），上下文为第 7 拍 / 下一节第 1 拍，
+    // 下一节第 2 拍（8.5）是三拍播放完毕后的回跳边界。
+    expect(computeCurrentBeatLoopBounds(segs, 7.6, 0.5)).toEqual({
+      loopStart: 7,
+      loopEnd: 8.5,
+    })
+  })
+
+  it('前节：上一节第 8 拍 → 当前节第 5 拍（在第 6 拍边界回跳）', () => {
+    expect(computeSectionLoopBounds(segs[1], segs, 0.5, 'front')).toEqual({
+      loopStart: 3.5,
+      loopEnd: 6.5,
+    })
+  })
+
+  it('后节：当前节第 4 拍 → 下一节第 1 拍（在下一节第 2 拍边界回跳）', () => {
+    expect(computeSectionLoopBounds(segs[1], segs, 0.5, 'back')).toEqual({
+      loopStart: 5.5,
+      loopEnd: 8.5,
+    })
+  })
+
+  it('首尾小节缺少上下文时只截断到媒体边界，不产生负数或倒置区间', () => {
+    expect(computeSectionLoopBounds(segs[0], segs, 0.5, 'front')).toEqual({
+      loopStart: 0,
+      loopEnd: 2.5,
+    })
+    expect(computeSectionLoopBounds(segs[3], segs, 0.5, 'back')).toEqual({
+      loopStart: 13.5,
+      loopEnd: 16,
+    })
+    expect(computeCurrentBeatLoopBounds(segs, 0, 0.5)).toEqual({
+      loopStart: 0,
+      loopEnd: 1,
+    })
+    expect(computeCurrentBeatLoopBounds(segs, 15.6, 0.5)).toEqual({
+      loopStart: 15,
+      loopEnd: 16,
+    })
+  })
+
+  it('偏移后的 5–8 拍开头残节按实际拍点截断，后节不会只剩第 8 拍', () => {
+    const offsetSegments: Segment[] = [
+      {
+        index: 1,
+        startTime: 0,
+        endTime: 2,
+        type: 'dance',
+        beats: [0, 0.5, 1, 1.5],
+        startBeat: 5,
+      },
+      {
+        index: 2,
+        startTime: 2,
+        endTime: 6,
+        type: 'dance',
+        beats: [2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5],
+      },
+    ]
+    expect(computeSectionLoopBounds(offsetSegments[0], offsetSegments, 0.5, 'front')).toEqual({
+      loopStart: 0,
+      loopEnd: 0.5,
+    })
+    expect(computeSectionLoopBounds(offsetSegments[0], offsetSegments, 0.5, 'back')).toEqual({
+      loopStart: 0,
+      loopEnd: 2.5,
+    })
+  })
+
+  it('不足四拍的结尾残节仍覆盖到媒体结尾', () => {
+    const offsetSegments: Segment[] = [
+      {
+        index: 1,
+        startTime: 0,
+        endTime: 4,
+        type: 'dance',
+        beats: [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5],
+      },
+      {
+        index: 2,
+        startTime: 4,
+        endTime: 5.4,
+        type: 'dance',
+        beats: [4, 4.5, 5],
+      },
+    ]
+    expect(computeSectionLoopBounds(offsetSegments[1], offsetSegments, 0.5, 'front')).toEqual({
+      loopStart: 3.5,
+      loopEnd: 5.4,
+    })
+    expect(computeSectionLoopBounds(offsetSegments[1], offsetSegments, 0.5, 'back')).toEqual({
+      loopStart: 4,
+      loopEnd: 5.4,
+    })
+  })
+
+  it('单节仍委托原有稳定区间，新增模式不改变旧语义', () => {
+    expect(computeSectionLoopBounds(segs[1], segs, 0.5, 'single')).toEqual(
+      computePaddedLoopBounds(segs[1], segs, 0.5),
+    )
   })
 })
 

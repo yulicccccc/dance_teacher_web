@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import SegmentList from '../src/components/SegmentList'
+import type { SectionLoopMode } from '../src/hooks/useBeatSync'
 import type { Segment } from '../src/types/api'
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -14,7 +15,11 @@ const segments: Segment[] = [1, 2, 3].map((index) => ({
   beats: [],
 }))
 
-function setup(multiSelect: boolean, showLoopBounds = false) {
+function setup(
+  multiSelect: boolean,
+  showLoopBounds = false,
+  loopBoundsMode?: SectionLoopMode,
+) {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -35,6 +40,7 @@ function setup(multiSelect: boolean, showLoopBounds = false) {
         onSelectAll={onSelectAll}
         onClearSelection={onClearSelection}
         showLoopBounds={showLoopBounds}
+        loopBoundsMode={loopBoundsMode}
         beatDuration={0.5}
       />,
     )
@@ -69,6 +75,16 @@ describe('SegmentList multi-loop ownership', () => {
     expect(container.textContent).toContain('循环 3.50–8.50 秒')
     document.body.innerHTML = ''
     expect(setup(true, false).container.textContent).not.toContain('循环')
+  })
+
+  it('shows the exact front/back four-beat ranges in the left list', () => {
+    expect(setup(false, false, 'front').container.textContent).toContain(
+      '循环 3.50–6.50 秒',
+    )
+    document.body.innerHTML = ''
+    expect(setup(false, false, 'back').container.textContent).toContain(
+      '循环 5.50–8.50 秒',
+    )
   })
 
   it('labels a retained leading fragment with its real beat numbers', () => {

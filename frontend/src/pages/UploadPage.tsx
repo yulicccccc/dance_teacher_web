@@ -55,7 +55,7 @@ export default function UploadPage() {
           试用示例（无需上传）
         </Button>
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          内置示例拍点，可测试三种循环和全部教学交互
+          内置示例拍点，可测试六档循环和全部教学交互
         </Typography>
         {error && (
           <Typography color="error" sx={{ mt: 2 }}>

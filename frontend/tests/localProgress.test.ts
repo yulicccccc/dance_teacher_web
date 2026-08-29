@@ -97,6 +97,15 @@ describe('loop progress migration', () => {
     expect(migrated.loopMode).toBe('ab')
     expect(migrated.loopEnabled).toBe(true)
   })
+
+  it.each(['current', 'front', 'back'] as const)(
+    'preserves the new %s fine-practice mode',
+    (loopMode) => {
+      const migrated = normalizeLessonProgress({ loopMode, loopEnabled: true })
+      expect(migrated.loopMode).toBe(loopMode)
+      expect(migrated.loopEnabled).toBe(true)
+    },
+  )
 })
 
 describe('useLocalProgress persistence (P0-9)', () => {

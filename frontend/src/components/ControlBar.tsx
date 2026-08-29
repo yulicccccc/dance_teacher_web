@@ -117,6 +117,9 @@ export default function ControlBar({
 
   const validAB = abLoop != null && abLoop.aTime < abLoop.bTime
   const canEnableLoop =
+    loopMode === 'current' ||
+    loopMode === 'front' ||
+    loopMode === 'back' ||
     loopMode === 'single' ||
     (loopMode === 'multi' && loopSegmentIds.length > 0) ||
     (loopMode === 'ab' && validAB)
@@ -128,11 +131,17 @@ export default function ControlBar({
         : ''
   const summary = !loopEnabled
     ? '循环已关闭'
-    : loopMode === 'single'
-      ? `循环中 · 单节（第 ${currentSegment} 节）`
-      : loopMode === 'multi'
-        ? `循环中 · 多节（第 ${formatSegmentRanges(loopSegmentIds)} 节）`
-        : `循环中 · AB（${formatABPoint('', abLoop, 'a', segments).replace(': ', '')} → ${formatABPoint('', abLoop, 'b', segments).replace(': ', '')}）`
+    : loopMode === 'current'
+      ? '循环中 · 当前（前一拍＋当前拍＋后一拍）'
+      : loopMode === 'front'
+        ? `循环中 · 前节（第 ${currentSegment} 节 1–4 拍）`
+        : loopMode === 'back'
+          ? `循环中 · 后节（第 ${currentSegment} 节 5–8 拍）`
+          : loopMode === 'single'
+            ? `循环中 · 单节（第 ${currentSegment} 节）`
+            : loopMode === 'multi'
+              ? `循环中 · 多节（第 ${formatSegmentRanges(loopSegmentIds)} 节）`
+              : `循环中 · AB（${formatABPoint('', abLoop, 'a', segments).replace(': ', '')} → ${formatABPoint('', abLoop, 'b', segments).replace(': ', '')}）`
 
   return (
     <Stack spacing={2} sx={{ mt: 2 }} alignItems="center">
@@ -213,6 +222,9 @@ export default function ControlBar({
           onChange={(_, value: LoopMode | null) => value && setLoopMode(value)}
           aria-label="循环模式"
         >
+          <ToggleButton value="current">当前</ToggleButton>
+          <ToggleButton value="front">前节</ToggleButton>
+          <ToggleButton value="back">后节</ToggleButton>
           <ToggleButton value="single">单节</ToggleButton>
           <ToggleButton value="multi">多节</ToggleButton>
           <ToggleButton value="ab">AB</ToggleButton>

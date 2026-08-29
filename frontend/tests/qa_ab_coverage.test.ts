@@ -59,7 +59,7 @@ const abEnabled: ABLoop = {
   aBeat: 5,
   bBeat: 13,
 }
-describe('lessonStore — one master loop switch with three modes', () => {
+describe('lessonStore — one master loop switch with six modes', () => {
   beforeEach(() => {
     useLessonStore.getState().reset()
   })

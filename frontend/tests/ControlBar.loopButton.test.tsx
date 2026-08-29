@@ -70,6 +70,14 @@ describe('ControlBar loop-redesign contract', () => {
     expect(loopButtons[0].textContent?.trim()).toBe('循环')
   })
 
+  it('orders the fine-practice modes before the existing three loop modes', () => {
+    const container = setup()
+    const labels = Array.from(
+      container.querySelectorAll('[aria-label="循环模式"] button'),
+    ).map((item) => item.textContent?.trim())
+    expect(labels).toEqual(['当前', '前节', '后节', '单节', '多节', 'AB'])
+  })
+
   it('disables multi loop until the left-list selection is non-empty', () => {
     const container = setup()
     act(() => useLessonStore.getState().setLoopMode('multi'))
