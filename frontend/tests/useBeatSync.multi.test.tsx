@@ -436,7 +436,7 @@ describe('useBeatSync — multi-segment loop (Part 2)', () => {
     container.remove()
   })
 
-  it('inactive (compare-mode) engine issues no loop seek', () => {
+  it('an explicitly inactive engine issues no loop seek', () => {
     // When `active=false` the engine must only keep prevTime fresh — driving the
     // playhead well past seg1's loopEnd must NOT produce any seek.
     const segs = makeSegments()

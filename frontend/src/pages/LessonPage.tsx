@@ -128,9 +128,10 @@ export default function LessonPage() {
     loopCount,
     loopMode === 'multi' ? 'multi' : 'single',
     loopMode === 'multi' ? loopSegmentIds : [],
-    // Compare-mode hides the player (display:none) but the SAME <video> keeps
-    // playing side-by-side — tell the engine to stop driving loop/AB seeks.
-    !compareOpen,
+    // Compare-mode draws this SAME <video> into the recording canvas. Keep the
+    // loop engine active so single, multi and A→B loops continue while the
+    // learner records as many repetitions as they want.
+    true,
     forceLoopTargetRef,
   )
 

@@ -242,11 +242,9 @@ export function useBeatSync(
   /** Segment indices (1-based, matching `Segment.index`) ticked for multi-loop. */
   loopSegmentIds: number[] = [],
   /**
-   * Engine "active" flag. Compare-mode hides the player (`display:none`) but the
-   * SAME <video> keeps playing side-by-side; when `false` the engine must NOT
-   * issue any loop/AB seek+play, or it would fight the comparison playback — it
-   * only keeps `prevTimeRef` fresh so re-activation never emits a phantom pulse.
-   * Defaults to `true` so every existing caller is unaffected.
+   * Optional engine "active" flag. When `false`, the engine does not issue any
+   * loop/AB seek+play; it only keeps `prevTimeRef` fresh so re-activation never
+   * emits a phantom pulse. Defaults to `true`.
    */
   active: boolean = true,
   /** Imperative single-loop target used to make list clicks race-free. */
@@ -499,8 +497,7 @@ export function useBeatSync(
           abSeekLandingRef.current = null
           seekingForAbRef.current = false
         }
-        // Compare-mode (inactive): the shared <video> is shown side-by-side and
-        // keeps playing. Do NOT issue any loop/AB seek+play — just keep the
+        // Inactive engine: do NOT issue any loop/AB seek+play — just keep the
         // previous-frame time fresh so reactivating never spawns a phantom
         // pulse. Segment/beat display is skipped too (overlay hidden; the same
         // frame drives the comparison canvas). The rAF chain is re-scheduled
@@ -777,10 +774,8 @@ export function useBeatSync(
   // edge iteration reset is handled inside `tick` via `wasABEnabledRef`. We use
   // the isolated `seekingForAbRef` guard so the resulting `seeked` is not
   // mistaken for a user drag (which would re-lock the single/multi loop target).
-  // Skipped entirely while the engine is inactive (compare mode: the same
-  // <video> is shown side-by-side and keeps playing — re-arming here would seek
-  // + play and fight the comparison playback). Re-runs when `active` flips
-  // false→true so the loop cleanly resumes after compare mode ends.
+  // Skipped entirely while the engine is inactive. Re-runs when `active` flips
+  // false→true so the loop cleanly resumes.
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
