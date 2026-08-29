@@ -32,7 +32,7 @@ export default function AnalysisPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const videoId = (location.state as { videoId?: string } | null)?.videoId ?? taskId ?? ''
-  const { status, error, loading, retry } = useAnalysisPolling(taskId)
+  const { status, error, notice, loading, retry } = useAnalysisPolling(taskId)
 
   useEffect(() => {
     if (status?.status === 'done') {
@@ -98,6 +98,11 @@ export default function AnalysisPage() {
       {error && (
         <Typography color="error" sx={{ mt: 2 }}>
           {error}
+        </Typography>
+      )}
+      {notice && (
+        <Typography color="text.secondary" sx={{ mt: 2 }}>
+          {notice}
         </Typography>
       )}
     </Container>
