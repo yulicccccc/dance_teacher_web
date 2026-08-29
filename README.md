@@ -12,13 +12,14 @@ v1 的权威产品与实现说明是 `docs/PRD/PRD-v1.0-complete.md`，发布验
 
 前置条件：安装 Docker Desktop。
 
-最省事的入口是双击桌面的 `打开舞蹈老师.command`。项目目录中也保留同名中文入口和 `start_local.command`。
+最省事的入口是双击桌面的原生应用 `舞蹈老师.app`。它在后台自动完成全部启动步骤，不会弹出终端窗口。项目目录中仍保留 `打开舞蹈老师.command` 和 `start_local.command` 作为备用入口。
 
-1. 双击 `打开舞蹈老师.command` 或 `start_local.command`。
-2. 脚本会在需要时打开 Docker Desktop，构建并启动前后端。
-3. 浏览器会自动打开 <http://localhost:8000>。
+1. 双击 `舞蹈老师.app`。
+2. 应用会在需要时打开 Docker Desktop 并等待就绪；优先使用本机已有版本快速恢复，只有镜像缺失或损坏时才自动重建。
+3. 健康检查通过后，浏览器会自动打开 <http://localhost:8000>。
+4. 成功时显示系统通知；失败时直接弹出最近的诊断信息。
 
-停止时双击 `stop_local.command`。停止不会删除视频、课程进度或 Docker 镜像；持久数据保存在 `backend/data/`。
+平时不必停止，关闭网页即可。需要释放 Docker 资源时再双击 `stop_local.command`；停止不会删除视频、课程进度或 Docker 镜像，持久数据保存在 `backend/data/`。
 
 也可以在终端运行：
 

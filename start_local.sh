@@ -3,6 +3,10 @@
 
 set -Eeuo pipefail
 
+# Finder/AppleScript launches with a minimal PATH, so include Docker Desktop's
+# common CLI locations explicitly instead of relying on a Terminal profile.
+export PATH="/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_PORT="${DANCE_TEACHER_PORT:-8000}"
 APP_URL="http://localhost:${APP_PORT}"
@@ -66,8 +70,19 @@ if [ "$HEALTH_STATUS" = "healthy" ]; then
   exit 0
 fi
 
-echo "正在构建最新前后端并启动（首次约需几分钟，之后通常很快）……"
-if ! "${COMPOSE_CMD[@]}" up --detach --build --wait --wait-timeout 300; then
+echo "正在用本机已有版本启动……"
+if ! "${COMPOSE_CMD[@]}" up --detach --no-build --wait --wait-timeout 60; then
+  echo "已有版本无法启动，正在自动重新构建（可能需要几分钟）……"
+  if "${COMPOSE_CMD[@]}" up --detach --build --wait --wait-timeout 300; then
+    STARTED=true
+  else
+    STARTED=false
+  fi
+else
+  STARTED=true
+fi
+
+if [ "$STARTED" != "true" ]; then
   echo
   echo "容器启动失败，以下是最近的诊断信息："
   "${COMPOSE_CMD[@]}" ps || true

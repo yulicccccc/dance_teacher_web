@@ -368,13 +368,15 @@ v1 没有账号和云同步；清理浏览器站点数据会清除浏览器端�
 
 ### 12.1 一键启动
 
-macOS 用户双击中文入口 `打开舞蹈老师.command`（或原入口 `start_local.command`）：
+macOS 用户首选双击桌面的原生应用 `舞蹈老师.app`。应用不显示终端窗口，并在后台调用 `start_local.sh`：
 
-1. 转交给 `start_local.sh`。
+1. 显示“正在启动”通知并转交给 `start_local.sh`；Finder 的精简 PATH 已兼容 Docker CLI。
 2. 检查 Docker CLI；如 Docker Desktop 未运行则自动打开并等待就绪。
 3. 若容器已经健康，直接打开网页。
-4. 否则执行 Docker Compose build/up，最长等待 300 秒。
-5. 成功后打开 `http://localhost:8000`；失败时展示容器状态和最近日志。
+4. 否则先用本机已有镜像恢复；仅当镜像缺失或启动失败时才执行 Docker Compose build/up，避免每次停机后重复下载依赖。
+5. 成功后打开 `http://localhost:8000` 并显示通知；失败时直接弹窗展示最近日志。
+
+项目目录中的 `打开舞蹈老师.command` 和 `start_local.command` 是不依赖原生应用的备用入口。
 
 可通过 `DANCE_TEACHER_PORT` 改宿主机端口。
 
