@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
 import { createElement, createRef } from 'react'
@@ -9,6 +9,18 @@ import {
   pickMimeType,
 } from '../src/utils/compare'
 import type { Segment } from '../src/types/api'
+
+const comparisonAudioMock = vi.hoisted(() => ({
+  track: { kind: 'audio', id: 'mixed-count-track' } as MediaStreamTrack,
+  cleanup: vi.fn(),
+  prepare: vi.fn(),
+  play: vi.fn(),
+}))
+
+vi.mock('../src/audio/countVoiceAudio', () => ({
+  prepareComparisonAudio: comparisonAudioMock.prepare,
+  playCountVoice: comparisonAudioMock.play,
+}))
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -45,6 +57,21 @@ let realCaf: typeof cancelAnimationFrame
 let realMediaRecorder: unknown
 let realCreateObjectURL: typeof URL.createObjectURL
 let realRevokeObjectURL: typeof URL.revokeObjectURL
+let canvasAddTrackSpy: ReturnType<typeof vi.fn>
+let ctxStub: {
+  fillStyle: string
+  font: string
+  fillRect: ReturnType<typeof vi.fn>
+  fillText: ReturnType<typeof vi.fn>
+  drawImage: ReturnType<typeof vi.fn>
+  save: ReturnType<typeof vi.fn>
+  restore: ReturnType<typeof vi.fn>
+  beginPath: ReturnType<typeof vi.fn>
+  rect: ReturnType<typeof vi.fn>
+  clip: ReturnType<typeof vi.fn>
+  translate: ReturnType<typeof vi.fn>
+  scale: ReturnType<typeof vi.fn>
+}
 
 beforeAll(() => {
   // rAF no-op so the draw loop body never runs (it only paints the canvas).
@@ -56,7 +83,7 @@ beforeAll(() => {
   realMediaRecorder = (globalThis as unknown as { MediaRecorder?: unknown }).MediaRecorder
   ;(globalThis as unknown as { MediaRecorder: unknown }).MediaRecorder = MockMediaRecorder
 
-  const ctxStub = {
+  ctxStub = {
     fillStyle: '',
     font: '',
     fillRect: vi.fn(),
@@ -74,8 +101,10 @@ beforeAll(() => {
     ctxStub
   ;(
     HTMLCanvasElement.prototype as unknown as { captureStream: () => unknown }
-  ).captureStream = () =>
-    ({ addTrack: vi.fn(), getAudioTracks: () => [] }) as unknown as MediaStream
+  ).captureStream = () => {
+    canvasAddTrackSpy = vi.fn()
+    return ({ addTrack: canvasAddTrackSpy, getAudioTracks: () => [] }) as unknown as MediaStream
+  }
 
   ;(window.HTMLMediaElement.prototype as unknown as { play: () => Promise<void> }).play =
     () => Promise.resolve()
@@ -99,6 +128,19 @@ beforeAll(() => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia
   }
+})
+
+beforeEach(() => {
+  comparisonAudioMock.cleanup.mockClear()
+  comparisonAudioMock.play.mockReset()
+  comparisonAudioMock.play.mockResolvedValue(undefined)
+  comparisonAudioMock.prepare.mockReset()
+  comparisonAudioMock.prepare.mockResolvedValue({
+    track: comparisonAudioMock.track,
+    cleanup: comparisonAudioMock.cleanup,
+  })
+  ctxStub.fillText.mockClear()
+  ctxStub.scale.mockClear()
 })
 
 afterAll(() => {
@@ -323,6 +365,113 @@ describe('CompareMode', () => {
 
     const a = container.querySelector('a[download="对比-小节3-my_lesson.webm"]')
     expect(a).not.toBeNull()
+  })
+
+  it('draws the live beat counter into the same canvas that becomes the recording', async () => {
+    mockCamera(true)
+    let frame: FrameRequestCallback | null = null
+    const previousRaf = globalThis.requestAnimationFrame
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      frame = callback
+      return 1
+    }) as typeof requestAnimationFrame
+
+    const { container, teacherVideoRef } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      beatIndex: 4,
+      pulse: true,
+      beatMirror: false,
+      videoName: 'my lesson',
+    })
+    await flush()
+    const camera = container.querySelector('[data-testid="compare-panel"] video') as HTMLVideoElement
+    Object.defineProperty(teacherVideoRef.current!, 'videoWidth', { configurable: true, value: 640 })
+    Object.defineProperty(teacherVideoRef.current!, 'videoHeight', { configurable: true, value: 360 })
+    Object.defineProperty(camera, 'videoWidth', { configurable: true, value: 640 })
+    Object.defineProperty(camera, 'videoHeight', { configurable: true, value: 360 })
+
+    act(() => frame?.(0))
+    expect(ctxStub.fillText).toHaveBeenCalledWith('4', expect.any(Number), expect.any(Number))
+    expect(container.querySelector('[data-testid="compare-canvas"]')).not.toBeNull()
+    globalThis.requestAnimationFrame = previousRaf
+  })
+
+  it('adds the shared teacher + count-command audio mix to the recorded canvas stream', async () => {
+    mockCamera(true)
+    const { container, teacherVideoRef } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+
+    await act(async () => findButton('开始录制', container)!.click())
+    await flush()
+    expect(comparisonAudioMock.prepare).toHaveBeenCalledWith(teacherVideoRef.current)
+    expect(canvasAddTrackSpy).toHaveBeenCalledWith(comparisonAudioMock.track)
+
+    await act(async () => findButton('停止录制', container)!.click())
+    await flush()
+    expect(comparisonAudioMock.cleanup).toHaveBeenCalled()
+  })
+
+  it('replays the first count when recording starts on an already-selected beat', async () => {
+    mockCamera(true)
+    const segment = {
+      ...seg(3, 8, 12),
+      startBeat: 5,
+      beats: [8, 8.5, 9, 9.5],
+    }
+    const { container } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment,
+      segmentIndex: 3,
+      mirror: true,
+      beatIndex: 5,
+      voiceEnabled: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+
+    await act(async () => findButton('开始录制', container)!.click())
+    await flush()
+    expect(comparisonAudioMock.play).toHaveBeenCalledWith(5)
+  })
+
+  it('offers an actual recording mirror before capture and a review mirror afterwards', async () => {
+    mockCamera(true)
+    const { container } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+    expect(findButton('录制镜像', container)).toBeTruthy()
+
+    await act(async () => findButton('开始录制', container)!.click())
+    await flush()
+    await act(async () => findButton('停止录制', container)!.click())
+    await flush()
+
+    const review = container.querySelector('[data-testid="review-video"]') as HTMLVideoElement
+    expect(review.style.transform).toBe('none')
+    act(() => findButton('回看镜像', container)!.click())
+    expect(review.style.transform).toBe('scaleX(-1)')
   })
 
   it('ticks the 录制中 elapsed badge while recording and clears it on stop', async () => {

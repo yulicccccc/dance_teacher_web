@@ -26,11 +26,9 @@ import ProgressHeader from '../components/ProgressHeader'
 import BeatInfoCard from '../components/BeatInfoCard'
 import { estimateBeatDuration, resegmentSegments, findBeatAt } from '../utils/segmentMath'
 import { resolveCompareSegment } from '../utils/compare'
-import { pickChineseVoice } from '../utils/voice'
+import { playCountVoice, stopCountVoice } from '../audio/countVoiceAudio'
 import { buildDemoResult, DEMO_VIDEO_URL } from '../demo/sampleLesson'
 import type { AnalysisResult, RecomputeMode } from '../types/api'
-
-const CHINESE_NUM = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
 
 export default function LessonPage() {
   const { taskId } = useParams<{ taskId: string }>()
@@ -314,37 +312,15 @@ export default function LessonPage() {
     updateProgress,
   ])
 
-  // Cache the available TTS voices. In some browsers `getVoices()` returns an
-  // empty array on the first call and populates asynchronously, firing the
-  // `voiceschanged` event when ready — so we listen and refresh the cache.
-  const voicesRef = useRef<SpeechSynthesisVoice[]>([])
+  // One set of short local 1–8 samples feeds both the learner's speakers and a
+  // Web Audio recording bus. That keeps practice, live comparison and the
+  // downloaded comparison file on exactly the same count voice.
   useEffect(() => {
-    if (!('speechSynthesis' in window)) return
-    const sync = () => {
-      voicesRef.current = window.speechSynthesis.getVoices()
-    }
-    sync()
-    window.speechSynthesis.addEventListener('voiceschanged', sync)
-    return () => {
-      window.speechSynthesis.removeEventListener('voiceschanged', sync)
-    }
-  }, [])
-
-  // Optional voice count (P1-1 preview): speak the current beat in Chinese using
-  // the most natural available Chinese voice (cached above). A slower rate and a
-  // slightly higher pitch read more clearly than the previous robotic default.
-  useEffect(() => {
-    if (voiceEnabled && beatIndex > 0 && 'speechSynthesis' in window) {
-      const u = new SpeechSynthesisUtterance(CHINESE_NUM[beatIndex] ?? String(beatIndex))
-      const voice = pickChineseVoice(voicesRef.current)
-      if (voice) u.voice = voice
-      u.lang = voice?.lang ?? 'zh-CN'
-      u.rate = 1.15
-      u.pitch = 1.08
-      window.speechSynthesis.cancel()
-      window.speechSynthesis.speak(u)
-    }
+    if (voiceEnabled && beatIndex > 0) void playCountVoice(beatIndex)
+    else stopCountVoice()
   }, [beatIndex, voiceEnabled])
+
+  useEffect(() => () => stopCountVoice(), [])
 
   const goToSegment = (index: number) => {
     const seg = offsetSegments.find((s) => s.index === index)
@@ -614,6 +590,10 @@ export default function LessonPage() {
                 segment={resolveCompareSegment(offsetSegments, currentSegment)}
                 segmentIndex={currentSegment}
                 mirror={mirror}
+                beatIndex={beatIndex}
+                pulse={pulse}
+                beatMirror={beatMirror}
+                voiceEnabled={voiceEnabled}
                 videoName={result.videoName}
               />
             )}

@@ -13,9 +13,14 @@ import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord'
 import DownloadIcon from '@mui/icons-material/Download'
 import ReplayIcon from '@mui/icons-material/Replay'
 import CloseIcon from '@mui/icons-material/Close'
+import FlipIcon from '@mui/icons-material/Flip'
 import type { Segment } from '../types/api'
 import { useLessonStore } from '../store/lessonStore'
 import { compareFileName, pickMimeType } from '../utils/compare'
+import {
+  playCountVoice,
+  prepareComparisonAudio,
+} from '../audio/countVoiceAudio'
 
 type Phase = 'loading' | 'denied' | 'ready' | 'recording' | 'review' | 'unsupported'
 
@@ -45,6 +50,13 @@ interface Props {
   segmentIndex: number
   /** Studio-mirror: applied to BOTH halves so left/right line up for comparison. */
   mirror: boolean
+  /** Live beat state from the shared teacher timeline. */
+  beatIndex?: number
+  pulse?: boolean
+  /** Mirror the count overlay independently from the two video halves. */
+  beatMirror?: boolean
+  /** Whether the shared count-command audio is currently enabled. */
+  voiceEnabled?: boolean
   videoName: string
 }
 
@@ -71,6 +83,32 @@ function drawHalf(
   ctx.restore()
 }
 
+/** Draw the same 1–8 count and dot row into the recorded canvas. */
+function drawBeatOverlay(
+  ctx: CanvasRenderingContext2D,
+  beatIndex: number,
+  pulse: boolean,
+  mirror: boolean,
+) {
+  if (beatIndex < 1 || beatIndex > 8) return
+  const overlayWidth = 230
+  ctx.save()
+  if (mirror) {
+    ctx.translate(overlayWidth, 0)
+    ctx.scale(-1, 1)
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.96)'
+  ctx.font = `bold ${pulse ? 84 : 76}px sans-serif`
+  ctx.fillText(String(beatIndex), 24, 120)
+  for (let index = 0; index < 8; index += 1) {
+    const active = index + 1 === beatIndex
+    const size = active && pulse ? 15 : 11
+    ctx.fillStyle = active ? '#22d3ee' : 'rgba(255,255,255,0.36)'
+    ctx.fillRect(24 + index * 22, 142 - (size - 11) / 2, size, size)
+  }
+  ctx.restore()
+}
+
 /**
  * In-place side-by-side comparison panel (teacher left / learner right).
  *
@@ -87,15 +125,22 @@ export default function CompareMode({
   segment,
   segmentIndex,
   mirror,
+  beatIndex = 0,
+  pulse = false,
+  beatMirror = false,
+  voiceEnabled = false,
   videoName,
 }: Props) {
   const [phase, setPhase] = useState<Phase>('loading')
   const [elapsed, setElapsed] = useState(0)
   const [errorMsg, setErrorMsg] = useState('')
+  const [reviewMirrored, setReviewMirrored] = useState(false)
+  const [recordedMirror, setRecordedMirror] = useState(mirror)
 
   // Playback speed is owned by the control bar (store) — the comparison simply
   // records at whatever speed the learner picked on the slider.
   const playbackRate = useLessonStore((s) => s.playbackRate)
+  const setMirror = useLessonStore((s) => s.setMirror)
 
   const cameraRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -106,6 +151,9 @@ export default function CompareMode({
   const chunksRef = useRef<Blob[]>([])
   const urlRef = useRef<string | null>(null)
   const startTsRef = useRef<number>(0)
+  const audioMixCleanupRef = useRef<(() => void) | null>(null)
+  const isRecordingRef = useRef(false)
+  const recordingMirrorRef = useRef(mirror)
 
   // Refs mirroring mutable values so stable callbacks read fresh data.
   const segRef = useRef<Segment | null>(segment)
@@ -116,6 +164,8 @@ export default function CompareMode({
   // tear it down and restart it on every toggle.
   const mirrorRef = useRef(mirror)
   mirrorRef.current = mirror
+  const beatRef = useRef({ beatIndex, pulse, beatMirror })
+  beatRef.current = { beatIndex, pulse, beatMirror }
 
   // ---- stop helpers --------------------------------------------------------
   const stopRecorder = useCallback(() => {
@@ -157,6 +207,9 @@ export default function CompareMode({
     // keep its indicator light on.
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
+    audioMixCleanupRef.current?.()
+    audioMixCleanupRef.current = null
+    isRecordingRef.current = false
     // NOTE: the teacher <video> belongs to the PAGE (it is the main player), so
     // we only pause it above. Clearing its `src`/calling load() here — as the
     // old modal-owned teacher video did — would tear down the main player.
@@ -176,12 +229,21 @@ export default function CompareMode({
     if (ctx && tv && cam) {
       ctx.fillStyle = '#000'
       ctx.fillRect(0, 0, CANVAS_W, CANVAS_H)
-      drawHalf(ctx, tv, 0, mirrorRef.current)
-      drawHalf(ctx, cam, HALF_W, mirrorRef.current)
+      const frameMirror = isRecordingRef.current
+        ? recordingMirrorRef.current
+        : mirrorRef.current
+      drawHalf(ctx, tv, 0, frameMirror)
+      drawHalf(ctx, cam, HALF_W, frameMirror)
       ctx.fillStyle = 'rgba(255,255,255,0.9)'
       ctx.font = 'bold 30px sans-serif'
       ctx.fillText('老师', 24, 44)
       ctx.fillText('我', HALF_W + 24, 44)
+      drawBeatOverlay(
+        ctx,
+        beatRef.current.beatIndex,
+        beatRef.current.pulse,
+        beatRef.current.beatMirror,
+      )
     }
     rafRef.current = requestAnimationFrame(draw)
   }, [teacherVideoRef])
@@ -203,15 +265,19 @@ export default function CompareMode({
       return
     }
 
-    // Mix the teacher's audio track into the recording (camera has no audio).
+    // One Web Audio destination mixes the teacher track with the exact same
+    // 1–8 samples heard during practice, so the downloaded file keeps both.
+    audioMixCleanupRef.current?.()
+    audioMixCleanupRef.current = null
     try {
-      const teacherStream = (
-        tv as HTMLVideoElement & { captureStream?: () => MediaStream }
-      ).captureStream?.()
-      const audioTrack = teacherStream?.getAudioTracks?.()[0]
-      if (audioTrack) canvasStream.addTrack(audioTrack)
+      const audioMix = await prepareComparisonAudio(tv)
+      if (audioMix) {
+        canvasStream.addTrack(audioMix.track)
+        audioMixCleanupRef.current = audioMix.cleanup
+      }
     } catch {
-      /* video-only fallback */
+      // Audio is additive: a browser audio-capture failure must not block the
+      // learner from recording the visual comparison.
     }
 
     const mime = pickMimeType()
@@ -221,6 +287,8 @@ export default function CompareMode({
         ? new MediaRecorder(canvasStream, { mimeType: mime })
         : new MediaRecorder(canvasStream)
     } catch {
+      audioMixCleanupRef.current?.()
+      audioMixCleanupRef.current = null
       setErrorMsg('当前浏览器不支持 MediaRecorder')
       setPhase('unsupported')
       return
@@ -231,6 +299,9 @@ export default function CompareMode({
       if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
     }
     rec.onstop = () => {
+      isRecordingRef.current = false
+      audioMixCleanupRef.current?.()
+      audioMixCleanupRef.current = null
       const blob = new Blob(chunksRef.current, {
         type: rec.mimeType || 'video/webm',
       })
@@ -241,17 +312,30 @@ export default function CompareMode({
     }
     recorderRef.current = rec
 
+    recordingMirrorRef.current = mirrorRef.current
+    isRecordingRef.current = true
+    setRecordedMirror(recordingMirrorRef.current)
+    setReviewMirrored(false)
     tv.currentTime = segRef.current.startTime
     // Record at the speed selected on the control-bar slider (shared store).
     tv.playbackRate = playbackRate
+    // Start MediaRecorder before playback so the first count after the seek is
+    // present in the file instead of escaping during play() startup.
+    rec.start()
+    if (voiceEnabled) {
+      // Seeking to a bar that is already displaying its first beat does not
+      // change LessonPage's beatIndex, so its normal effect would not replay
+      // that first count. Trigger it explicitly after MediaRecorder starts.
+      void playCountVoice(segRef.current.startBeat ?? 1)
+    }
+    startTsRef.current = Date.now()
+    setElapsed(0)
+    setPhase('recording')
     try {
       await tv.play()
     } catch {
       /* autoplay hiccup — ignore */
     }
-    rec.start()
-    startTsRef.current = Date.now()
-    setElapsed(0)
     // Tick the on-canvas "录制中 · x.xs" badge. Wall-clock elapsed (not the
     // teacher's `currentTime`) is what the learner cares about, and it stays
     // honest at any playbackRate. `stopLive` clears this interval on every exit
@@ -260,8 +344,7 @@ export default function CompareMode({
       () => setElapsed((Date.now() - startTsRef.current) / 1000),
       100,
     )
-    setPhase('recording')
-  }, [playbackRate, stopLive, teacherVideoRef])
+  }, [playbackRate, stopLive, teacherVideoRef, voiceEnabled])
 
   /**
    * Stop the recording. This is the ONLY way a recording ends: it runs for as
@@ -278,6 +361,7 @@ export default function CompareMode({
       urlRef.current = null
     }
     chunksRef.current = []
+    setReviewMirrored(false)
     const tv = teacherVideoRef.current
     if (tv) {
       tv.currentTime = segRef.current?.startTime ?? 0
@@ -466,7 +550,12 @@ export default function CompareMode({
             src={urlRef.current}
             controls
             data-testid="review-video"
-            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              transform: reviewMirrored ? 'scaleX(-1)' : 'none',
+            }}
           />
         )}
 
@@ -486,13 +575,22 @@ export default function CompareMode({
         sx={{ mt: 1.5 }}
       >
         {phase === 'ready' && (
-          <Button
-            variant="contained"
-            startIcon={<FiberManualRecordIcon />}
-            onClick={() => void startRecording()}
-          >
-            开始录制
-          </Button>
+          <>
+            <Button
+              variant="contained"
+              startIcon={<FiberManualRecordIcon />}
+              onClick={() => void startRecording()}
+            >
+              开始录制
+            </Button>
+            <Button
+              variant={mirror ? 'contained' : 'outlined'}
+              startIcon={<FlipIcon />}
+              onClick={() => setMirror(!mirror)}
+            >
+              录制镜像
+            </Button>
+          </>
         )}
         {phase === 'recording' && (
           <Button
@@ -518,6 +616,16 @@ export default function CompareMode({
             <Button startIcon={<ReplayIcon />} variant="outlined" onClick={reRecord}>
               重新录制
             </Button>
+            <Button
+              startIcon={<FlipIcon />}
+              variant={reviewMirrored ? 'contained' : 'outlined'}
+              onClick={() => setReviewMirrored((value) => !value)}
+            >
+              回看镜像
+            </Button>
+            <Typography variant="caption" color="text.secondary">
+              下载文件：录制镜像{recordedMirror ? '已开启' : '未开启'}
+            </Typography>
           </>
         )}
         {phase === 'ready' && (

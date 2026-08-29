@@ -24,6 +24,7 @@ import { useLessonStore, type LoopMode } from '../store/lessonStore'
 import { findBeatAt } from '../utils/segmentMath'
 import { formatDuration } from '../utils/format'
 import type { Segment, ABLoop } from '../types/api'
+import { unlockCountVoiceAudio } from '../audio/countVoiceAudio'
 
 interface Props {
   playing: boolean
@@ -241,7 +242,15 @@ export default function ControlBar({
           </Button>
         </Tooltip>
         <Tooltip title="口令提示（语音数拍）">
-          <Button variant={voiceEnabled ? 'contained' : 'outlined'} startIcon={<RecordVoiceOverIcon />} onClick={() => setVoiceEnabled(!voiceEnabled)}>
+          <Button
+            variant={voiceEnabled ? 'contained' : 'outlined'}
+            startIcon={<RecordVoiceOverIcon />}
+            onClick={() => {
+              const next = !voiceEnabled
+              if (next) void unlockCountVoiceAudio()
+              setVoiceEnabled(next)
+            }}
+          >
             口令
           </Button>
         </Tooltip>
