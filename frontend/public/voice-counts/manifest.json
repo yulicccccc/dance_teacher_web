@@ -1,0 +1,85 @@
+{
+  "source": "Stream Bend Way.m4a",
+  "sourceSha256": "b0f60cbf92cf473773be25d4abaaaf19ed693de1972fbb3f93b0d1ec1f3a515d",
+  "processedAt": "2026-08-29",
+  "format": {
+    "codec": "pcm_s16le",
+    "sampleRate": 24000,
+    "channels": 1,
+    "targetMeanDb": -20
+  },
+  "clips": [
+    {
+      "beat": 1,
+      "file": "1.wav",
+      "sourceStartSeconds": 2.443,
+      "sourceEndSeconds": 2.813,
+      "gainDb": 4.4,
+      "durationSeconds": 0.37,
+      "sha256": "b00ecb82011d50c9c08ec92895aa83cf673517d154db8604429f753bab57a552"
+    },
+    {
+      "beat": 2,
+      "file": "2.wav",
+      "sourceStartSeconds": 3.411,
+      "sourceEndSeconds": 3.727,
+      "gainDb": 4.7,
+      "durationSeconds": 0.316,
+      "sha256": "8402cca6b2b4c9ac584ffd4155f8c45a872df3ff92df760bce3bd827d7c286f3"
+    },
+    {
+      "beat": 3,
+      "file": "3.wav",
+      "sourceStartSeconds": 4.226,
+      "sourceEndSeconds": 4.713,
+      "gainDb": 4.8,
+      "durationSeconds": 0.487,
+      "sha256": "c52465a9cbc1e2783cbd6b54a12970ca3a01b8ed5a4086721021cec4e29585c1"
+    },
+    {
+      "beat": 4,
+      "file": "4.wav",
+      "sourceStartSeconds": 5.165,
+      "sourceEndSeconds": 5.577,
+      "gainDb": 6.9,
+      "durationSeconds": 0.412,
+      "sha256": "5856bcee55df6ef499ca76e432b82ca8bf2c4cc2f49a46907fa08f386392ce23"
+    },
+    {
+      "beat": 5,
+      "file": "5.wav",
+      "sourceStartSeconds": 6.248,
+      "sourceEndSeconds": 6.516,
+      "gainDb": 9.8,
+      "durationSeconds": 0.268,
+      "sha256": "669025ec1df91ad5021031e7c50d89ff21e79ca690ac5a4dfccfe987cd4de6e1"
+    },
+    {
+      "beat": 6,
+      "file": "6.wav",
+      "sourceStartSeconds": 7.201,
+      "sourceEndSeconds": 7.543,
+      "gainDb": 0.8,
+      "durationSeconds": 0.342,
+      "sha256": "fef1f7967d57a2b10097b47220ef3889cf072bbd3f2c52549aa82e2e28181cf4"
+    },
+    {
+      "beat": 7,
+      "file": "7.wav",
+      "sourceStartSeconds": 8.215,
+      "sourceEndSeconds": 8.602,
+      "gainDb": 8,
+      "durationSeconds": 0.387,
+      "sha256": "712b92d41b069757d1b00ee51724d19842491b0a5ebc1aacc0debb260367c005"
+    },
+    {
+      "beat": 8,
+      "file": "8.wav",
+      "sourceStartSeconds": 9.363,
+      "sourceEndSeconds": 9.643,
+      "gainDb": 6.2,
+      "durationSeconds": 0.28,
+      "sha256": "ee27a42cda636469bd82dac2e2b5051a64ad29dc6e7126c05b91b8a219ef7724"
+    }
+  ]
+}
