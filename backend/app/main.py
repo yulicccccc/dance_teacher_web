@@ -13,6 +13,8 @@ from .routers import analysis, upload
 
 ensure_dirs()
 
+APP_VERSION = "1.2.4"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,7 +42,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="舞蹈老师 API", version="1.2.3", lifespan=lifespan)
+app = FastAPI(title="舞蹈老师 API", version=APP_VERSION, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -59,7 +61,7 @@ app.include_router(analysis.router)
 @app.get("/health")
 @app.get("/api/v1/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "version": APP_VERSION}
 
 
 # Serve the built frontend from a single port in production, including SPA
@@ -84,6 +86,10 @@ if os.path.isdir(_FRONTEND_DIST):
     from fastapi.responses import FileResponse
 
     _DIST_ABS = os.path.abspath(_FRONTEND_DIST)
+    _NO_STORE_HEADERS = {"Cache-Control": "no-store, max-age=0"}
+    _IMMUTABLE_HEADERS = {
+        "Cache-Control": "public, max-age=31536000, immutable"
+    }
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str) -> FileResponse:
@@ -105,6 +111,16 @@ if os.path.isdir(_FRONTEND_DIST):
             and candidate.startswith(_DIST_ABS + os.sep)
             and os.path.isfile(candidate)
         ):
-            return FileResponse(candidate)
+            # Vite fingerprints bundled assets, so those are safe to cache.
+            # Unfingerprinted files (including replaceable voice samples) must
+            # be revalidated on every launch just like the SPA shell.
+            headers = (
+                _IMMUTABLE_HEADERS
+                if full_path.startswith("assets/")
+                else _NO_STORE_HEADERS
+            )
+            return FileResponse(candidate, headers=headers)
         # SPA fallback: index.html for "/" and all unknown non-file paths.
-        return FileResponse(os.path.join(_DIST_ABS, "index.html"))
+        return FileResponse(
+            os.path.join(_DIST_ABS, "index.html"), headers=_NO_STORE_HEADERS
+        )

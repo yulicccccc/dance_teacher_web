@@ -39,6 +39,7 @@ def test_root_serves_index_html():
     r = client.get("/")
     assert r.status_code == 200
     assert "text/html" in r.headers.get("content-type", "")
+    assert r.headers["cache-control"] == "no-store, max-age=0"
     body = r.text
     assert '<div id="root">' in body
     assert "舞蹈老师" in body
@@ -64,6 +65,7 @@ def test_deep_client_route_serves_index_html():
     r = client.get("/analysis/some-task-id")
     assert r.status_code == 200
     assert "text/html" in r.headers.get("content-type", "")
+    assert r.headers["cache-control"] == "no-store, max-age=0"
     assert '<div id="root">' in r.text
 
 
