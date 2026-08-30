@@ -144,8 +144,8 @@ export default function VideoPlayer({
       className="relative w-full aspect-video bg-black rounded-xl overflow-hidden"
       role="region"
       tabIndex={0}
-      aria-label="视频播放区：单击播放或暂停；双击左侧上一拍、中间全屏、右侧下一拍"
-      title="单击播放/暂停 · 双击左侧上一拍 · 中间全屏 · 右侧下一拍"
+      aria-label="视频播放区：单击播放或暂停；双击左侧上一拍、中间全屏、右侧下一拍；逗号前一拍、句号后一拍"
+      title="单击播放/暂停 · 双击左侧上一拍 · 中间全屏 · 右侧下一拍 · , 前一拍 · . 后一拍"
       onClick={schedulePlaybackToggle}
       // Physical LEFT / CENTRE / RIGHT thirds keep the gesture independent of
       // video mirroring: previous beat / fullscreen / next beat.
@@ -166,6 +166,12 @@ export default function VideoPlayer({
         if (key === ' ' || key === 'enter' || key === 'k') {
           e.preventDefault()
           if (!e.repeat) onTogglePlay?.()
+        } else if (e.code === 'Comma' || key === ',' || key === '，') {
+          e.preventDefault()
+          stepBeat?.(-1)
+        } else if (e.code === 'Period' || key === '.' || key === '。') {
+          e.preventDefault()
+          stepBeat?.(1)
         } else if (key === 'arrowleft') {
           e.preventDefault()
           stepBeat?.(-1)

@@ -105,9 +105,11 @@ function dblClick(el: HTMLElement, clientX: number) {
   })
 }
 
-function keyDown(el: HTMLElement, key: string) {
+function keyDown(el: HTMLElement, key: string, code = '') {
   act(() => {
-    el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key }))
+    el.dispatchEvent(
+      new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key, code }),
+    )
   })
 }
 
@@ -200,5 +202,19 @@ describe('VideoPlayer general playback gestures', () => {
     expect(onTogglePlay).toHaveBeenCalledTimes(2)
     expect(stepBeat.mock.calls).toEqual([[-1], [1]])
     expect(requestFullscreen).toHaveBeenCalledTimes(1)
+  })
+
+  it('supports Movist-style comma/period for previous/next beat across input methods', () => {
+    const { box, stepBeat } = setup({ mirror: false })
+    keyDown(box, ',', 'Comma')
+    // A Chinese input method may report a full-width punctuation key value;
+    // the physical code must keep the shortcut stable.
+    keyDown(box, '。', 'Period')
+    expect(stepBeat.mock.calls).toEqual([[-1], [1]])
+
+    const input = document.createElement('input')
+    box.appendChild(input)
+    keyDown(input, ',', 'Comma')
+    expect(stepBeat).toHaveBeenCalledTimes(2)
   })
 })

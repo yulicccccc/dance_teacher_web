@@ -26,7 +26,7 @@
 | P0-2 librosa BPM + 8 拍分段 | 服务端 ffmpeg/librosa，与本地使用同一算法 | 后端 beat/segment 测试；真实 MOV 本地/线上同为 127.15 BPM |
 | P0-3 四阶段分析进度与重试 | queued → extracting → beat_detecting → segmenting → done/failed | `AnalysisPage`、API retry 测试 |
 | P0-4 小节列表、点击跳转、当前节高亮 | 保留；多节模式下该列表同时承担唯一勾选入口 | `SegmentList.multiSelect.test.tsx` |
-| P0-5 播放器基础操作 + 变速/进度 | 单击播放/暂停；双击左/中/右=上一拍/全屏/下一拍；空格/K、←→、F；0.25x–1.5x 变速与时间轴拖动 | `VideoPlayer.test.tsx`、`ControlBar` |
+| P0-5 播放器基础操作 + 变速/进度 | 单击播放/暂停；双击左/中/右=上一拍/全屏/下一拍；空格/K、←→、F；Movist 风格 `,`/`.` 前后逐拍；0.25x–1.5x 变速与时间轴拖动 | `VideoPlayer.test.tsx`、`ControlBar` |
 | P0-6 分段循环 | 当前、前节、后节、单节、多节、AB 六档模式，共用一个“循环”总开关 | 循环测试组 |
 | P0-7 1–8 数拍 + 脉冲 | rAF 驱动，节拍叠加层独立镜像 | `BeatOverlay.test.tsx`、beat sync 测试 |
 | P0-8 镜像/视角 | 单机位视频镜像默认开；拍点镜像独立控制 | `ControlBar.loopButton.test.tsx`、`VideoPlayer.test.tsx` |

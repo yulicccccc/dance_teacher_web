@@ -13,7 +13,7 @@ from .routers import analysis, upload
 
 ensure_dirs()
 
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.6"
 
 
 @asynccontextmanager
