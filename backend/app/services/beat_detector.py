@@ -230,6 +230,27 @@ OCTAVE_BAND_SLACK = 0.02
 # genuine slow/medium track — it only lets the *fast* ones through.
 RECOVER_CEIL_BPM = 260
 
+# --- Competing rhythmic-layer arbitration ----------------------------------
+#
+# A single ``beat_track(start_bpm=120)`` can lock to the wrong *non-octave*
+# percussion layer.  The real regression was Tyla - THAT GIRL: the primary
+# tracker followed ~126 BPM while a fast-prior tracker found the much steadier
+# ~178 BPM musical pulse.  Dance teachers normally count that ambiguous fast
+# pulse at half time (~89 BPM), which is also the value the user had to look up
+# and enter manually.
+#
+# We run one additional tracker with a 180 BPM prior and compare the candidates
+# with an onset F-measure minus interval jitter.  A five-point quality margin
+# keeps harmless prior changes from flipping an already-good grid.  If the
+# winning fast lattice conflicts with (rather than being exactly 2x) the
+# primary lattice, we use its better half-time phase as the dance-count grid.
+# A true fast pulse whose primary candidate is its half-tempo octave stays fast.
+FAST_TRACK_PRIOR_BPM = 180.0
+FAST_DANCE_FOLD_BPM = 160.0
+TRACKER_QUALITY_MARGIN = 0.05
+TRACKER_CV_PENALTY = 1.0
+TRACKER_OCTAVE_REL_TOL = 0.08
+
 
 def _as_float(v) -> float:
     """Coerce a scalar / 0-d / 1-d numpy tempo estimate to a plain float.
@@ -684,6 +705,81 @@ def _octave_fitness(onsets, onset_w, grid, tol: float) -> float:
     recall = float(np.sum(w[_nearest_distance(o, g) <= tol]) / total)
     denom = precision + recall
     return float(2.0 * precision * recall / denom) if denom > 0 else 0.0
+
+
+def _tracker_candidate_quality(onsets, onset_w, beats: List[float]) -> float:
+    """Score a tracked grid by musical support and timing stability.
+
+    ``_octave_fitness`` alone can slightly prefer a dense but wobbly
+    percussion layer.  Subtracting interval CV makes a stable musical lattice
+    win when both candidates explain a similar amount of onset energy.  This
+    score is only compared between trackers of the same audio, never exposed as
+    the user-facing confidence value.
+    """
+    import numpy as np
+
+    b = np.asarray(beats, dtype=float)
+    if b.size < 4:
+        return float("-inf")
+    tempo = _effective_tempo_median([float(t) for t in b])
+    if tempo <= 0:
+        return float("-inf")
+    tol = min(OCTAVE_TOL, 0.2 * (60.0 / tempo))
+    fitness = _octave_fitness(onsets, onset_w, b, tol)
+    return float(fitness - TRACKER_CV_PENALTY * min(_interval_cv(b), 1.0))
+
+
+def _tempos_are_octave_related(a: float, b: float) -> bool:
+    """Whether two positive tempos describe the same pulse at 1x / 2x."""
+    if a <= 0 or b <= 0:
+        return False
+    ratio = max(a, b) / min(a, b)
+    return abs(ratio - 2.0) / 2.0 <= TRACKER_OCTAVE_REL_TOL
+
+
+def _best_half_time_phase(beats: List[float], env, sr: int, hop: int) -> List[float]:
+    """Keep the stronger of the two half-time phases from a fast beat grid."""
+    even = [float(t) for t in beats[::2]]
+    odd = [float(t) for t in beats[1::2]]
+    if len(odd) < 2:
+        return even if len(even) >= 2 else [float(t) for t in beats]
+    even_score = _grid_score(env, sr, hop, even)
+    odd_score = _grid_score(env, sr, hop, odd)
+    return odd if odd_score > even_score else even
+
+
+def _select_dance_tracker(
+    primary_beats: List[float],
+    fast_beats: List[float],
+    onsets,
+    onset_w,
+    env,
+    sr: int,
+    hop: int,
+) -> Tuple[List[float], bool]:
+    """Choose between normal/fast priors and return a dance-count beat grid.
+
+    The second return value is true only when a non-octave fast winner was
+    intentionally folded to half time.  Callers use it to prevent the later
+    genuine-fast recovery step from immediately densifying that deliberate
+    dance-count grid again.
+    """
+    primary = [float(t) for t in primary_beats]
+    alternate = [float(t) for t in fast_beats]
+    primary_quality = _tracker_candidate_quality(onsets, onset_w, primary)
+    alternate_quality = _tracker_candidate_quality(onsets, onset_w, alternate)
+    if alternate_quality < primary_quality + TRACKER_QUALITY_MARGIN:
+        return primary, False
+
+    primary_tempo = _effective_tempo_median(primary)
+    alternate_tempo = _effective_tempo_median(alternate)
+    if (
+        alternate_tempo >= FAST_DANCE_FOLD_BPM
+        and primary_tempo > 0
+        and not _tempos_are_octave_related(primary_tempo, alternate_tempo)
+    ):
+        return _best_half_time_phase(alternate, env, sr, hop), True
+    return alternate, False
 
 
 def _band_target_period(period: float, slow: float, fast: float) -> float:
@@ -1176,8 +1272,9 @@ def detect(
     We therefore REMOVE the per-window ``beat.tempo`` call entirely. Tempo
     robustness is recovered by the remaining, fast, thread-safe mechanisms:
 
-      1. A single ``beat_track(start_bpm=DEFAULT_BPM=120)`` (the original fast
-         path, < 1s, no JIT-heavy aggregate op).
+      1. Two inexpensive ``beat_track`` calls at 120 and 180 BPM priors. Their
+         grids are compared by onset support and interval stability; a
+         non-octave fast winner is folded to its stronger dance-count phase.
       2. Octave correction: if the locked tempo lands at half/double tempo,
          re-track once at the corrected prior and keep the steadier grid.
       3. **Snapping every detected beat to the nearest onset peak** within
@@ -1266,10 +1363,6 @@ def detect(
             tempo, beat_times = tempo2, beat_times2
             eff = _effective_tempo(beat_times)
 
-    # The raw tracked grid, kept untouched: it is both the fallback output and
-    # the reference the uniform-grid arbitration is calibrated against.
-    raw_times: List[float] = list(beat_times)
-
     # Fine envelope (hop 128) — sub-frame resolution for snapping and fitting.
     env_fine = librosa.onset.onset_strength(y=y, sr=sr, hop_length=HOP_FINE)
 
@@ -1289,6 +1382,30 @@ def detect(
     # Salience of each onset, reused by the octave resolution below so noisy
     # mixes (many weak spurious peaks) cannot outvote the real hits.
     onset_w = _onset_weights(env_fine, sr, HOP_FINE, onset_times)
+
+    # Competing-layer arbitration. A second, fast prior is cheap compared with
+    # decoding / fine-envelope analysis and catches dance tracks where the
+    # 120-BPM prior follows a dense non-metrical percussion layer. The helper
+    # may deliberately fold an ambiguous fast winner to the half-time pulse a
+    # teacher counts; remember that decision so fast recovery cannot undo it.
+    fast_tempo, fast_times = _track(FAST_TRACK_PRIOR_BPM)
+    beat_times, dance_folded_fast = _select_dance_tracker(
+        beat_times,
+        fast_times,
+        onset_times,
+        onset_w,
+        env_fine,
+        sr,
+        HOP_FINE,
+    )
+    if beat_times == fast_times:
+        tempo = fast_tempo
+    elif len(beat_times) >= 2:
+        tempo = _effective_tempo_median(beat_times)
+
+    # The selected raw grid is kept untouched: it is both the fallback output
+    # and the reference the uniform-grid arbitration is calibrated against.
+    raw_times: List[float] = list(beat_times)
 
     # Low-band (kick/snare) envelope for the genuine-fast recovery. Built
     # lazily: only a fit that is a *candidate* for being half speed needs it,
@@ -1369,16 +1486,17 @@ def detect(
                             # asks for a move; recover those here, on low-band
                             # evidence, and rebuild from the halved period so
                             # the number still describes the emitted beats.
-                            period = _recover_fast_period(
-                                _low_env,
-                                sr,
-                                HOP_FINE,
-                                period,
-                                phase,
-                                t_hi,
-                                duration,
-                                RECOVER_CEIL_BPM,
-                            )
+                            if not dance_folded_fast:
+                                period = _recover_fast_period(
+                                    _low_env,
+                                    sr,
+                                    HOP_FINE,
+                                    period,
+                                    phase,
+                                    t_hi,
+                                    duration,
+                                    RECOVER_CEIL_BPM,
+                                )
                             resolved = _build_grid(period, phase, t_hi, duration)
                             if len(resolved) >= 2:
                                 beat_times = resolved
@@ -1426,9 +1544,10 @@ def detect(
             # beat list. Kept as a sibling call rather than folded into
             # `_resolve_octave_beats` so each function keeps one job: that one
             # honours the tempo band, this one fixes a fit the band cannot see.
-            beat_times = _recover_fast_beats(
-                _low_env, sr, HOP_FINE, beat_times, RECOVER_CEIL_BPM
-            )
+            if not dance_folded_fast:
+                beat_times = _recover_fast_beats(
+                    _low_env, sr, HOP_FINE, beat_times, RECOVER_CEIL_BPM
+                )
         except Exception as exc:  # noqa: BLE001 - never fail the analysis
             logging.getLogger(__name__).warning(
                 "beat_detector: octave resolution failed on the fallback path, "
