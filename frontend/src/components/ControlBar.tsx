@@ -109,6 +109,8 @@ export default function ControlBar({
   const abLoop = useLessonStore((s) => s.abLoop)
   const voiceEnabled = useLessonStore((s) => s.voiceEnabled)
   const setVoiceEnabled = useLessonStore((s) => s.setVoiceEnabled)
+  const voiceVolume = useLessonStore((s) => s.voiceVolume)
+  const setVoiceVolume = useLessonStore((s) => s.setVoiceVolume)
   const beatOffset = useLessonStore((s) => s.beatOffset)
   const draftBeatOffset = useLessonStore((s) => s.draftBeatOffset)
   const setBeatOffset = useLessonStore((s) => s.setBeatOffset)
@@ -254,6 +256,31 @@ export default function ControlBar({
             口令
           </Button>
         </Tooltip>
+        {voiceEnabled && (
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Typography variant="body2" color="text.secondary">
+              口令音量
+            </Typography>
+            <Slider
+              size="small"
+              min={0}
+              max={2}
+              step={0.05}
+              value={voiceVolume}
+              onChange={(_, value) => setVoiceVolume(value as number)}
+              valueLabelDisplay="auto"
+              valueLabelFormat={(value) => `${Math.round(Number(value) * 100)}%`}
+              aria-label="口令音量"
+              sx={{ width: 120 }}
+            />
+            <Typography
+              variant="body2"
+              sx={{ minWidth: 44, fontVariantNumeric: 'tabular-nums' }}
+            >
+              {Math.round(voiceVolume * 100)}%
+            </Typography>
+          </Stack>
+        )}
         <Tooltip title={comparing ? '退出对照分屏' : '左右分屏对比（左老师 / 右自己）'}>
           <Button
             variant={comparing ? 'outlined' : 'contained'}

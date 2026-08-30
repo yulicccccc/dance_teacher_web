@@ -66,8 +66,8 @@ export async function unlockCountVoiceAudio(): Promise<void> {
   )
 }
 
-/** Play one short count to speakers and the recorder's shared mix bus. */
-export async function playCountVoice(beat: number): Promise<void> {
+/** Play one short count at the same volume in speakers and the recording mix. */
+export async function playCountVoice(beat: number, volume = 1): Promise<void> {
   if (beat < 1 || beat > 8) return
   const generation = ++playGeneration
   const audioContext = getAudioContext()
@@ -82,9 +82,12 @@ export async function playCountVoice(beat: number): Promise<void> {
       /* the previous short clip already ended */
     }
     const source = audioContext.createBufferSource()
+    const gain = audioContext.createGain()
+    gain.gain.value = Math.max(0, Math.min(2, volume))
     source.buffer = buffer
-    source.connect(audioContext.destination)
-    source.connect(getMixDestination(audioContext))
+    source.connect(gain)
+    gain.connect(audioContext.destination)
+    gain.connect(getMixDestination(audioContext))
     activeSource = source
     source.start()
   } catch {

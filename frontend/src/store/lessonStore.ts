@@ -27,6 +27,8 @@ export interface LessonState {
   loopSegmentIds: number[]
   abLoop: ABLoop | null
   voiceEnabled: boolean
+  /** Count-command gain: 0 = mute, 1 = original level, 2 = 200%. */
+  voiceVolume: number
   /** Confirmed beat-grid offset used by the player and segmentation. */
   beatOffset: number
   /** Slider draft; does not alter segmentation until explicitly confirmed. */
@@ -45,6 +47,7 @@ export interface LessonState {
   setLoopSegmentIds: (ids: number[]) => void
   setABLoop: (v: ABLoop | null) => void
   setVoiceEnabled: (b: boolean) => void
+  setVoiceVolume: (n: number) => void
   setBeatOffset: (n: number) => void
   setDraftBeatOffset: (n: number) => void
   setLoopCount: (n: number | null) => void
@@ -70,6 +73,7 @@ export const useLessonStore = create<LessonState>((set) => ({
   loopSegmentIds: [],
   abLoop: null,
   voiceEnabled: false,
+  voiceVolume: 1,
   beatOffset: 0,
   draftBeatOffset: 0,
   loopCount: null,
@@ -125,6 +129,7 @@ export const useLessonStore = create<LessonState>((set) => ({
         state.loopMode === 'ab' && !validAB(abLoop) ? false : state.loopEnabled,
     })),
   setVoiceEnabled: (b) => set({ voiceEnabled: b }),
+  setVoiceVolume: (n) => set({ voiceVolume: Math.max(0, Math.min(2, n)) }),
   setBeatOffset: (n) => set({ beatOffset: n }),
   setDraftBeatOffset: (n) => set({ draftBeatOffset: n }),
   setLoopCount: (n) => set({ loopCount: n }),
@@ -151,6 +156,7 @@ export const useLessonStore = create<LessonState>((set) => ({
       loopSegmentIds: [],
       abLoop: null,
       voiceEnabled: false,
+      voiceVolume: 1,
       beatOffset: 0,
       draftBeatOffset: 0,
       loopCount: null,

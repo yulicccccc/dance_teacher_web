@@ -64,6 +64,7 @@ export default function LessonPage() {
   const beatMirror = useLessonStore((s) => s.beatMirror)
   const loopEnabled = useLessonStore((s) => s.loopEnabled)
   const voiceEnabled = useLessonStore((s) => s.voiceEnabled)
+  const voiceVolume = useLessonStore((s) => s.voiceVolume)
   const beatOffset = useLessonStore((s) => s.beatOffset)
   const draftBeatOffset = useLessonStore((s) => s.draftBeatOffset)
   const loopCount = useLessonStore((s) => s.loopCount)
@@ -172,6 +173,7 @@ export default function LessonPage() {
               loopCount: p.loopCount,
               practiceSeconds: p.practiceSeconds,
               voiceEnabled: p.voiceEnabled,
+              voiceVolume: p.voiceVolume ?? 1,
               beatOffset: p.beatOffset ?? 0,
               draftBeatOffset: p.beatOffset ?? 0,
               learnedSegments: p.learnedSegments,
@@ -196,6 +198,7 @@ export default function LessonPage() {
                 loopCount: null,
                 practiceSeconds: 0,
                 voiceEnabled: false,
+                voiceVolume: 1,
                 beatOffset: 0,
                 learnedSegments: [],
                 abLoop: null,
@@ -288,6 +291,7 @@ export default function LessonPage() {
       loopCount,
       practiceSeconds,
       voiceEnabled,
+      voiceVolume,
       beatOffset,
       learnedSegments,
       abLoop,
@@ -306,6 +310,7 @@ export default function LessonPage() {
     loopCount,
     practiceSeconds,
     voiceEnabled,
+    voiceVolume,
     beatOffset,
     learnedSegments,
     abLoop,
@@ -316,9 +321,9 @@ export default function LessonPage() {
   // Web Audio recording bus. That keeps practice, live comparison and the
   // downloaded comparison file on exactly the same count voice.
   useEffect(() => {
-    if (voiceEnabled && beatIndex > 0) void playCountVoice(beatIndex)
+    if (voiceEnabled && beatIndex > 0) void playCountVoice(beatIndex, voiceVolume)
     else stopCountVoice()
-  }, [beatIndex, voiceEnabled])
+  }, [beatIndex, voiceEnabled, voiceVolume])
 
   useEffect(() => () => stopCountVoice(), [])
 
@@ -594,6 +599,7 @@ export default function LessonPage() {
                 pulse={pulse}
                 beatMirror={beatMirror}
                 voiceEnabled={voiceEnabled}
+                voiceVolume={voiceVolume}
                 videoName={result.videoName}
               />
             )}

@@ -43,6 +43,7 @@ function progress(over: Partial<LessonProgress> = {}): LessonProgress {
     loopCount: null,
     practiceSeconds: 0,
     voiceEnabled: false,
+    voiceVolume: 1,
     beatOffset: 0,
     learnedSegments: [],
     updatedAt: '2026-07-24T00:00:00Z',

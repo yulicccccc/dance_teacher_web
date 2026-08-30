@@ -115,6 +115,15 @@ describe('ControlBar loop-redesign contract', () => {
     expect(useLessonStore.getState().beatMirror).toBe(false)
   })
 
+  it('shows the independent count-command volume while voice is enabled', () => {
+    const container = setup()
+    act(() => useLessonStore.getState().setVoiceEnabled(true))
+    expect(container.querySelector('[aria-label="口令音量"]')).not.toBeNull()
+    expect(container.textContent).toContain('100%')
+    act(() => useLessonStore.getState().setVoiceVolume(1.75))
+    expect(container.textContent).toContain('175%')
+  })
+
   it('keeps beat-offset edits as a draft until explicit confirmation', () => {
     const container = setup()
     act(() => useLessonStore.getState().setDraftBeatOffset(2))

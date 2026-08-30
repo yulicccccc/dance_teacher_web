@@ -13,6 +13,11 @@ describe('shared count-command audio bus', () => {
     start: vi.fn(),
     stop: vi.fn(),
   }
+  const countGain = {
+    gain: { value: 1 },
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  }
   const teacherSource = {
     connect: vi.fn(),
     disconnect: vi.fn(),
@@ -23,6 +28,7 @@ describe('shared count-command audio bus', () => {
     resume: vi.fn().mockResolvedValue(undefined),
     createMediaStreamDestination: vi.fn(() => mixedDestination),
     createBufferSource: vi.fn(() => countSource),
+    createGain: vi.fn(() => countGain),
     createMediaStreamSource: vi.fn(() => teacherSource),
     decodeAudioData: vi.fn().mockResolvedValue({ duration: 0.4 } as AudioBuffer),
     close: vi.fn().mockResolvedValue(undefined),
@@ -52,13 +58,16 @@ describe('shared count-command audio bus', () => {
     globalThis.fetch = originalFetch
   })
 
-  it('plays each number to the learner and the recording destination', async () => {
+  it('applies one count volume to both the learner and recording destination', async () => {
     const { playCountVoice } = await import('../src/audio/countVoiceAudio')
-    await playCountVoice(3)
+    await playCountVoice(3, 1.75)
 
     expect(globalThis.fetch).toHaveBeenCalledWith('/voice-counts/3.wav')
-    expect(countSource.connect).toHaveBeenCalledWith(output)
-    expect(countSource.connect).toHaveBeenCalledWith(mixedDestination)
+    expect(context.createGain).toHaveBeenCalled()
+    expect(countGain.gain.value).toBe(1.75)
+    expect(countSource.connect).toHaveBeenCalledWith(countGain)
+    expect(countGain.connect).toHaveBeenCalledWith(output)
+    expect(countGain.connect).toHaveBeenCalledWith(mixedDestination)
     expect(countSource.start).toHaveBeenCalled()
   })
 

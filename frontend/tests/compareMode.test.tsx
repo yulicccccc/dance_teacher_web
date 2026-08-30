@@ -440,13 +440,14 @@ describe('CompareMode', () => {
       mirror: true,
       beatIndex: 5,
       voiceEnabled: true,
+      voiceVolume: 1.6,
       videoName: 'my lesson',
     })
     await flush()
 
     await act(async () => findButton('开始录制', container)!.click())
     await flush()
-    expect(comparisonAudioMock.play).toHaveBeenCalledWith(5)
+    expect(comparisonAudioMock.play).toHaveBeenCalledWith(5, 1.6)
   })
 
   it('offers an actual recording mirror before capture and a review mirror afterwards', async () => {

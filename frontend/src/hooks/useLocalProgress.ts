@@ -27,6 +27,7 @@ export interface LessonProgress {
   loopCount: number | null
   practiceSeconds: number
   voiceEnabled: boolean
+  voiceVolume: number
   beatOffset: number
   learnedSegments: number[]
   /** Custom A→B loop (beat-anchored). Optional so old progress blobs without it
@@ -95,6 +96,7 @@ export function normalizeLessonProgress(raw: LegacyLessonProgress): LessonProgre
     loopCount: raw.loopCount ?? null,
     practiceSeconds: raw.practiceSeconds ?? 0,
     voiceEnabled: raw.voiceEnabled ?? false,
+    voiceVolume: Math.max(0, Math.min(2, raw.voiceVolume ?? 1)),
     beatOffset: raw.beatOffset ?? 0,
     learnedSegments: sortSegments(raw.learnedSegments ?? []),
     abLoop,

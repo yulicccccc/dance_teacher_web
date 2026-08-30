@@ -57,6 +57,8 @@ interface Props {
   beatMirror?: boolean
   /** Whether the shared count-command audio is currently enabled. */
   voiceEnabled?: boolean
+  /** Shared count-command volume (0–2) used by practice and recording. */
+  voiceVolume?: number
   videoName: string
 }
 
@@ -129,6 +131,7 @@ export default function CompareMode({
   pulse = false,
   beatMirror = false,
   voiceEnabled = false,
+  voiceVolume = 1,
   videoName,
 }: Props) {
   const [phase, setPhase] = useState<Phase>('loading')
@@ -326,7 +329,7 @@ export default function CompareMode({
       // Seeking to a bar that is already displaying its first beat does not
       // change LessonPage's beatIndex, so its normal effect would not replay
       // that first count. Trigger it explicitly after MediaRecorder starts.
-      void playCountVoice(segRef.current.startBeat ?? 1)
+      void playCountVoice(segRef.current.startBeat ?? 1, voiceVolume)
     }
     startTsRef.current = Date.now()
     setElapsed(0)
@@ -344,7 +347,7 @@ export default function CompareMode({
       () => setElapsed((Date.now() - startTsRef.current) / 1000),
       100,
     )
-  }, [playbackRate, stopLive, teacherVideoRef, voiceEnabled])
+  }, [playbackRate, stopLive, teacherVideoRef, voiceEnabled, voiceVolume])
 
   /**
    * Stop the recording. This is the ONLY way a recording ends: it runs for as

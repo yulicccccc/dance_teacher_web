@@ -58,6 +58,7 @@ function progress(over: Partial<LessonProgress> = {}): LessonProgress {
     loopCount: null,
     practiceSeconds: 0,
     voiceEnabled: false,
+    voiceVolume: 1,
     beatOffset: 0,
     learnedSegments: [],
     updatedAt: '2026-07-24T00:00:00Z',
@@ -88,6 +89,13 @@ describe('loop progress migration', () => {
     expect(migrated.loopMode).toBe('single')
     expect(migrated.loopEnabled).toBe(true)
     expect(migrated.beatMirror).toBe(false)
+    expect(migrated.voiceVolume).toBe(1)
+  })
+
+  it('restores and clamps the saved count-command volume', () => {
+    expect(normalizeLessonProgress({ voiceVolume: 1.7 }).voiceVolume).toBe(1.7)
+    expect(normalizeLessonProgress({ voiceVolume: 9 }).voiceVolume).toBe(2)
+    expect(normalizeLessonProgress({ voiceVolume: -2 }).voiceVolume).toBe(0)
   })
 
   it('migrates an enabled legacy AB loop into AB mode', () => {
