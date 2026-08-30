@@ -471,8 +471,10 @@ describe('CompareMode', () => {
 
     const review = container.querySelector('[data-testid="review-video"]') as HTMLVideoElement
     expect(review.style.transform).toBe('none')
+    expect(review.classList.contains('review-video--mirrored')).toBe(false)
     act(() => findButton('回看镜像', container)!.click())
     expect(review.style.transform).toBe('scaleX(-1)')
+    expect(review.classList.contains('review-video--mirrored')).toBe(true)
   })
 
   it('ticks the 录制中 elapsed badge while recording and clears it on stop', async () => {

@@ -12,3 +12,10 @@ body {
     'Microsoft YaHei', sans-serif;
   background: #f7f7fb;
 }
+
+/* The review mirror flips the video element. Chromium/Safari render native
+   controls inside that element, so counter-flip only their control panel to
+   keep play, time, volume, fullscreen and menu in their normal positions. */
+.review-video--mirrored::-webkit-media-controls-panel {
+  transform: scaleX(-1);
+}

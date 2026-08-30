@@ -553,6 +553,7 @@ export default function CompareMode({
             src={urlRef.current}
             controls
             data-testid="review-video"
+            className={reviewMirrored ? 'review-video--mirrored' : undefined}
             style={{
               width: '100%',
               height: '100%',

@@ -22,7 +22,7 @@ client = TestClient(app)
 def test_health_endpoints():
     r = client.get("/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok", "version": "1.2.4"}
+    assert r.json() == {"status": "ok", "version": "1.2.5"}
     r2 = client.get("/api/v1/health")
     assert r2.status_code == 200
 
