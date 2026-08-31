@@ -59,6 +59,9 @@ function progress(over: Partial<LessonProgress> = {}): LessonProgress {
     practiceSeconds: 0,
     voiceEnabled: false,
     voiceVolume: 1,
+    metronomeEnabled: false,
+    metronomeSound: 'click',
+    metronomeVolume: 0.8,
     beatOffset: 0,
     learnedSegments: [],
     updatedAt: '2026-07-24T00:00:00Z',
@@ -96,6 +99,22 @@ describe('loop progress migration', () => {
     expect(normalizeLessonProgress({ voiceVolume: 1.7 }).voiceVolume).toBe(1.7)
     expect(normalizeLessonProgress({ voiceVolume: 9 }).voiceVolume).toBe(2)
     expect(normalizeLessonProgress({ voiceVolume: -2 }).voiceVolume).toBe(0)
+  })
+
+  it('migrates and clamps metronome preferences for old and new courses', () => {
+    const legacy = normalizeLessonProgress({})
+    expect(legacy.metronomeEnabled).toBe(false)
+    expect(legacy.metronomeSound).toBe('click')
+    expect(legacy.metronomeVolume).toBe(0.8)
+
+    const saved = normalizeLessonProgress({
+      metronomeEnabled: true,
+      metronomeSound: 'wood',
+      metronomeVolume: 9,
+    })
+    expect(saved.metronomeEnabled).toBe(true)
+    expect(saved.metronomeSound).toBe('wood')
+    expect(saved.metronomeVolume).toBe(2)
   })
 
   it('migrates an enabled legacy AB loop into AB mode', () => {

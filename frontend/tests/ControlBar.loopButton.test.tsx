@@ -135,6 +135,16 @@ describe('ControlBar loop-redesign contract', () => {
     expect(container.textContent).toContain('175%')
   })
 
+  it('offers three metronome sounds and an independent volume control', () => {
+    const container = setup()
+    act(() => button(container, '节拍器').click())
+    expect(useLessonStore.getState().metronomeEnabled).toBe(true)
+    expect(container.textContent).toContain('清脆')
+    expect(container.textContent).toContain('木鱼')
+    expect(container.textContent).toContain('电子')
+    expect(container.querySelector('[aria-label="节拍器音量"]')).not.toBeNull()
+  })
+
   it('keeps beat-offset edits as a draft until explicit confirmation', () => {
     const container = setup()
     act(() => useLessonStore.getState().setDraftBeatOffset(2))

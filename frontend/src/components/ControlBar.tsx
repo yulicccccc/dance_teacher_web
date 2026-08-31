@@ -21,11 +21,16 @@ import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver'
 import VideocamIcon from '@mui/icons-material/Videocam'
 import VideocamOffIcon from '@mui/icons-material/VideocamOff'
 import KeyboardIcon from '@mui/icons-material/Keyboard'
+import MusicNoteIcon from '@mui/icons-material/MusicNote'
 import { useLessonStore, type LoopMode } from '../store/lessonStore'
 import { findBeatAt } from '../utils/segmentMath'
 import { formatDuration } from '../utils/format'
 import type { Segment, ABLoop } from '../types/api'
-import { unlockCountVoiceAudio } from '../audio/countVoiceAudio'
+import {
+  unlockCountVoiceAudio,
+  unlockMetronomeAudio,
+  type MetronomeSound,
+} from '../audio/countVoiceAudio'
 
 interface Props {
   playing: boolean
@@ -114,6 +119,12 @@ export default function ControlBar({
   const setVoiceEnabled = useLessonStore((s) => s.setVoiceEnabled)
   const voiceVolume = useLessonStore((s) => s.voiceVolume)
   const setVoiceVolume = useLessonStore((s) => s.setVoiceVolume)
+  const metronomeEnabled = useLessonStore((s) => s.metronomeEnabled)
+  const setMetronomeEnabled = useLessonStore((s) => s.setMetronomeEnabled)
+  const metronomeSound = useLessonStore((s) => s.metronomeSound)
+  const setMetronomeSound = useLessonStore((s) => s.setMetronomeSound)
+  const metronomeVolume = useLessonStore((s) => s.metronomeVolume)
+  const setMetronomeVolume = useLessonStore((s) => s.setMetronomeVolume)
   const beatOffset = useLessonStore((s) => s.beatOffset)
   const draftBeatOffset = useLessonStore((s) => s.draftBeatOffset)
   const setBeatOffset = useLessonStore((s) => s.setBeatOffset)
@@ -281,6 +292,57 @@ export default function ControlBar({
               sx={{ minWidth: 44, fontVariantNumeric: 'tabular-nums' }}
             >
               {Math.round(voiceVolume * 100)}%
+            </Typography>
+          </Stack>
+        )}
+        <Tooltip title="跟随当前拍网格发声；每小节第 1 拍为重音">
+          <Button
+            variant={metronomeEnabled ? 'contained' : 'outlined'}
+            startIcon={<MusicNoteIcon />}
+            onClick={() => {
+              const next = !metronomeEnabled
+              if (next) void unlockMetronomeAudio()
+              setMetronomeEnabled(next)
+            }}
+          >
+            节拍器
+          </Button>
+        </Tooltip>
+        {metronomeEnabled && (
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={metronomeSound}
+              onChange={(_, value: MetronomeSound | null) =>
+                value && setMetronomeSound(value)
+              }
+              aria-label="节拍器声音"
+            >
+              <ToggleButton value="click">清脆</ToggleButton>
+              <ToggleButton value="wood">木鱼</ToggleButton>
+              <ToggleButton value="beep">电子</ToggleButton>
+            </ToggleButtonGroup>
+            <Typography variant="body2" color="text.secondary">
+              节拍器音量
+            </Typography>
+            <Slider
+              size="small"
+              min={0}
+              max={2}
+              step={0.05}
+              value={metronomeVolume}
+              onChange={(_, value) => setMetronomeVolume(value as number)}
+              valueLabelDisplay="auto"
+              valueLabelFormat={(value) => `${Math.round(Number(value) * 100)}%`}
+              aria-label="节拍器音量"
+              sx={{ width: 120 }}
+            />
+            <Typography
+              variant="body2"
+              sx={{ minWidth: 44, fontVariantNumeric: 'tabular-nums' }}
+            >
+              {Math.round(metronomeVolume * 100)}%
             </Typography>
           </Stack>
         )}

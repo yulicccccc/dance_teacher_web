@@ -24,6 +24,25 @@ export interface BeatInfoCardProps {
 const BPM_MIN = 40
 const BPM_MAX = 300
 
+/** Robust tempo estimate: the median keeps one early/late tap from dominating. */
+export function estimateTappedBpm(tapTimes: number[]): number | null {
+  if (tapTimes.length < 2) return null
+  const intervals = tapTimes
+    .slice(1)
+    .map((time, index) => time - tapTimes[index])
+    .filter((interval) => interval >= 200 && interval <= 1500)
+    .sort((a, b) => a - b)
+  if (intervals.length === 0) return null
+  const middle = Math.floor(intervals.length / 2)
+  const median =
+    intervals.length % 2 === 0
+      ? (intervals[middle - 1] + intervals[middle]) / 2
+      : intervals[middle]
+  const tappedBpm = 60_000 / median
+  if (tappedBpm < BPM_MIN || tappedBpm > BPM_MAX) return null
+  return Math.round(tappedBpm * 10) / 10
+}
+
 /** Map a confidence value to a human label and a dot colour. */
 function confidenceLevel(confidence: number): { label: string; color: string } {
   if (confidence >= 0.8) return { label: '高', color: '#4caf50' }
@@ -44,6 +63,8 @@ export default function BeatInfoCard({
 }: BeatInfoCardProps) {
   // Start the editable field at the detected value (1 decimal place).
   const [input, setInput] = useState<string>(bpm.toFixed(1))
+  const [tapTimes, setTapTimes] = useState<number[]>([])
+  const [tapBpm, setTapBpm] = useState<number | null>(null)
 
   const parsed = parseFloat(input)
   const isValid = !Number.isNaN(parsed) && parsed >= BPM_MIN && parsed <= BPM_MAX
@@ -53,6 +74,24 @@ export default function BeatInfoCard({
   const handleApply = () => {
     if (disabled) return
     onApplyBpm(parsed)
+  }
+
+  const handleTap = () => {
+    const now = performance.now()
+    const last = tapTimes[tapTimes.length - 1]
+    const recent =
+      tapTimes.length > 0 && now - last <= 2000
+        ? [...tapTimes, now].slice(-9)
+        : [now]
+    const estimate = estimateTappedBpm(recent)
+    setTapTimes(recent)
+    setTapBpm(estimate)
+    if (recent.length >= 4 && estimate != null) setInput(estimate.toFixed(1))
+  }
+
+  const clearTaps = () => {
+    setTapTimes([])
+    setTapBpm(null)
   }
 
   return (
@@ -108,7 +147,23 @@ export default function BeatInfoCard({
           >
             用此 BPM 重算
           </Button>
+          <Button variant="outlined" onClick={handleTap}>
+            跟拍点按 BPM{tapTimes.length > 0 ? `（${Math.min(tapTimes.length, 4)}/4）` : ''}
+          </Button>
+          {tapTimes.length > 0 && (
+            <Button variant="text" onClick={clearTaps}>
+              清除点按
+            </Button>
+          )}
         </Box>
+        <Typography variant="caption" color="text.secondary">
+          {tapBpm != null
+            ? `点按估算：${tapBpm.toFixed(1)} BPM${tapTimes.length >= 4 ? '，已填入上方' : '，继续点到 4 下更稳'}`
+            : '听着音乐每拍点一下；停顿超过 2 秒会自动重新开始。'}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          判断技巧：节拍器越播越偏通常是 BPM 不对；始终固定错同样的拍数，通常是第一拍，需要调“拍点偏移”。
+        </Typography>
       </CardContent>
     </Card>
   )

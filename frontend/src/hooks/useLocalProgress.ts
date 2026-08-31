@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AnalysisResult, ABLoop } from '../types/api'
 import type { LoopMode } from '../store/lessonStore'
+import type { MetronomeSound } from '../audio/countVoiceAudio'
 
 /**
  * Local-first progress store (PRD P0-9). Mirrors the schema in
@@ -28,6 +29,9 @@ export interface LessonProgress {
   practiceSeconds: number
   voiceEnabled: boolean
   voiceVolume: number
+  metronomeEnabled: boolean
+  metronomeSound: MetronomeSound
+  metronomeVolume: number
   beatOffset: number
   learnedSegments: number[]
   /** Custom A→B loop (beat-anchored). Optional so old progress blobs without it
@@ -84,6 +88,10 @@ export function normalizeLessonProgress(raw: LegacyLessonProgress): LessonProgre
     loopMode === 'single' ||
     (loopMode === 'multi' && loopSegmentIds.length > 0) ||
     (loopMode === 'ab' && abLoop != null && abLoop.aTime < abLoop.bTime)
+  const metronomeSound: MetronomeSound =
+    raw.metronomeSound === 'wood' || raw.metronomeSound === 'beep'
+      ? raw.metronomeSound
+      : 'click'
 
   return {
     currentSegment: raw.currentSegment ?? 1,
@@ -97,6 +105,9 @@ export function normalizeLessonProgress(raw: LegacyLessonProgress): LessonProgre
     practiceSeconds: raw.practiceSeconds ?? 0,
     voiceEnabled: raw.voiceEnabled ?? false,
     voiceVolume: Math.max(0, Math.min(2, raw.voiceVolume ?? 1)),
+    metronomeEnabled: raw.metronomeEnabled ?? false,
+    metronomeSound,
+    metronomeVolume: Math.max(0, Math.min(2, raw.metronomeVolume ?? 0.8)),
     beatOffset: raw.beatOffset ?? 0,
     learnedSegments: sortSegments(raw.learnedSegments ?? []),
     abLoop,

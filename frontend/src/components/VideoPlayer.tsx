@@ -28,6 +28,7 @@ interface Props {
   onToggleMirror?: () => void
   onToggleBeatMirror?: () => void
   onToggleVoice?: () => void
+  onToggleMetronome?: () => void
   onToggleLearned?: () => void
   onShowShortcuts?: () => void
   /** Beat dot click-through from the overlay (0-based dot index). When the
@@ -70,6 +71,7 @@ export default function VideoPlayer({
   onToggleMirror,
   onToggleBeatMirror,
   onToggleVoice,
+  onToggleMetronome,
   onToggleLearned,
   onShowShortcuts,
   onDotClick,
@@ -259,7 +261,10 @@ export default function VideoPlayer({
           }
         } else if (key === 'c') {
           e.preventDefault()
-          if (!e.repeat) onToggleVoice?.()
+          if (!e.repeat) {
+            if (e.shiftKey) onToggleMetronome?.()
+            else onToggleVoice?.()
+          }
         } else if (key === 'd') {
           e.preventDefault()
           if (!e.repeat) onToggleLearned?.()

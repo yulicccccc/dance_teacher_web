@@ -28,8 +28,11 @@ import { estimateBeatDuration, resegmentSegments, findBeatAt } from '../utils/se
 import { resolveCompareSegment } from '../utils/compare'
 import {
   playCountVoice,
+  playMetronomeBeat,
   stopCountVoice,
+  stopMetronome,
   unlockCountVoiceAudio,
+  unlockMetronomeAudio,
 } from '../audio/countVoiceAudio'
 import { buildDemoResult, DEMO_VIDEO_URL } from '../demo/sampleLesson'
 import type { AnalysisResult, RecomputeMode } from '../types/api'
@@ -64,7 +67,7 @@ const SHORTCUT_GROUPS = [
     title: '画面与学习',
     rows: [
       ['M / Shift+M', '视频镜面 / 拍点镜面'],
-      ['C', '开启或关闭口令'],
+      ['C / Shift+C', '开启或关闭口令 / 节拍器'],
       ['D', '标记或取消当前小节“已学会”'],
       ['F', '进入或退出全屏'],
       ['?', '打开这张快捷键表'],
@@ -108,6 +111,9 @@ export default function LessonPage() {
   const loopEnabled = useLessonStore((s) => s.loopEnabled)
   const voiceEnabled = useLessonStore((s) => s.voiceEnabled)
   const voiceVolume = useLessonStore((s) => s.voiceVolume)
+  const metronomeEnabled = useLessonStore((s) => s.metronomeEnabled)
+  const metronomeSound = useLessonStore((s) => s.metronomeSound)
+  const metronomeVolume = useLessonStore((s) => s.metronomeVolume)
   const beatOffset = useLessonStore((s) => s.beatOffset)
   const draftBeatOffset = useLessonStore((s) => s.draftBeatOffset)
   const loopCount = useLessonStore((s) => s.loopCount)
@@ -125,6 +131,7 @@ export default function LessonPage() {
   const toggleLoopEnabled = useLessonStore((s) => s.toggleLoopEnabled)
   const setLoopMode = useLessonStore((s) => s.setLoopMode)
   const setVoiceEnabled = useLessonStore((s) => s.setVoiceEnabled)
+  const setMetronomeEnabled = useLessonStore((s) => s.setMetronomeEnabled)
   const setBeatOffset = useLessonStore((s) => s.setBeatOffset)
   const toggleLoopSegmentId = useLessonStore((s) => s.toggleLoopSegmentId)
   const setLoopSegmentIds = useLessonStore((s) => s.setLoopSegmentIds)
@@ -223,6 +230,9 @@ export default function LessonPage() {
               practiceSeconds: p.practiceSeconds,
               voiceEnabled: p.voiceEnabled,
               voiceVolume: p.voiceVolume ?? 1,
+              metronomeEnabled: p.metronomeEnabled ?? false,
+              metronomeSound: p.metronomeSound ?? 'click',
+              metronomeVolume: p.metronomeVolume ?? 0.8,
               beatOffset: p.beatOffset ?? 0,
               draftBeatOffset: p.beatOffset ?? 0,
               learnedSegments: p.learnedSegments,
@@ -248,6 +258,9 @@ export default function LessonPage() {
                 practiceSeconds: 0,
                 voiceEnabled: false,
                 voiceVolume: 1,
+                metronomeEnabled: false,
+                metronomeSound: 'click',
+                metronomeVolume: 0.8,
                 beatOffset: 0,
                 learnedSegments: [],
                 abLoop: null,
@@ -341,6 +354,9 @@ export default function LessonPage() {
       practiceSeconds,
       voiceEnabled,
       voiceVolume,
+      metronomeEnabled,
+      metronomeSound,
+      metronomeVolume,
       beatOffset,
       learnedSegments,
       abLoop,
@@ -360,6 +376,9 @@ export default function LessonPage() {
     practiceSeconds,
     voiceEnabled,
     voiceVolume,
+    metronomeEnabled,
+    metronomeSound,
+    metronomeVolume,
     beatOffset,
     learnedSegments,
     abLoop,
@@ -374,7 +393,21 @@ export default function LessonPage() {
     else stopCountVoice()
   }, [beatIndex, voiceEnabled, voiceVolume])
 
-  useEffect(() => () => stopCountVoice(), [])
+  useEffect(() => {
+    if (metronomeEnabled && beatIndex > 0) {
+      void playMetronomeBeat(beatIndex, metronomeSound, metronomeVolume)
+    } else {
+      stopMetronome()
+    }
+  }, [beatIndex, metronomeEnabled, metronomeSound, metronomeVolume])
+
+  useEffect(
+    () => () => {
+      stopCountVoice()
+      stopMetronome()
+    },
+    [],
+  )
 
   const goToSegment = (index: number) => {
     const seg = offsetSegments.find((s) => s.index === index)
@@ -475,6 +508,12 @@ export default function LessonPage() {
     const next = !useLessonStore.getState().voiceEnabled
     if (next) void unlockCountVoiceAudio()
     setVoiceEnabled(next)
+  }
+
+  const handleToggleMetronome = () => {
+    const next = !useLessonStore.getState().metronomeEnabled
+    if (next) void unlockMetronomeAudio()
+    setMetronomeEnabled(next)
   }
 
   // ---- Custom A→B loop (beat-anchored) ---------------------------------
@@ -659,6 +698,7 @@ export default function LessonPage() {
                   setBeatMirror(!useLessonStore.getState().beatMirror)
                 }
                 onToggleVoice={handleToggleVoice}
+                onToggleMetronome={handleToggleMetronome}
                 onToggleLearned={handleMarkLearned}
                 onShowShortcuts={() => setShortcutHelpOpen(true)}
                 // The overlay dots are 0-based; `Segment.index` (and therefore

@@ -23,12 +23,12 @@
 | PRD | 当前实现 | 验证入口 |
 |---|---|---|
 | P0-1 本地文件 + URL、进度、失败重试 | 本地/URL 均保留；大文件 4MB 分块、幂等上传、自动重试 | `Uploader`、`client.test.ts`、`uploader.test.tsx` |
-| P0-2 librosa BPM + 8 拍分段 | 服务端 ffmpeg/librosa，与本地使用同一算法 | 后端 beat/segment 测试；真实 MOV 本地/线上同为 127.15 BPM |
+| P0-2 librosa BPM + 8 拍分段 | 服务端 ffmpeg/librosa，与本地使用同一算法；可手填或 Tap BPM 后固定重算 | 后端 beat/segment 测试；`BeatInfoCard.tapTempo.test.tsx` |
 | P0-3 四阶段分析进度与重试 | queued → extracting → beat_detecting → segmenting → done/failed | `AnalysisPage`、API retry 测试 |
 | P0-4 小节列表、点击跳转、当前节高亮 | 保留；多节模式下该列表同时承担唯一勾选入口 | `SegmentList.multiSelect.test.tsx` |
 | P0-5 播放器基础操作 + 变速/进度 | 单击播放/暂停；双击左/中/右=上一拍/全屏/下一拍；完整扒舞键盘模式覆盖逐拍/逐节、0.05× 调速、六档循环、AB、镜面、口令、已学和全屏；0.25x–1.5x 变速与时间轴拖动 | `VideoPlayer.test.tsx`、`ControlBar.loopButton.test.tsx` |
 | P0-6 分段循环 | 当前、前节、后节、单节、多节、AB 六档模式，共用一个“循环”总开关 | 循环测试组 |
-| P0-7 1–8 数拍 + 脉冲 | rAF 驱动，节拍叠加层独立镜像 | `BeatOverlay.test.tsx`、beat sync 测试 |
+| P0-7 1–8 数拍 + 脉冲 | rAF 驱动，节拍叠加层独立镜像；三音色节拍器复用同一 `beatIndex` 并给第 1 拍重音 | `BeatOverlay.test.tsx`、`countVoiceAudio.test.ts`、beat sync 测试 |
 | P0-8 镜像/视角 | 单机位视频镜像默认开；拍点镜像独立控制 | `ControlBar.loopButton.test.tsx`、`VideoPlayer.test.tsx` |
 | P0-9 本地进度恢复 | localStorage + IndexedDB；循环 v2 状态纳入持久化 | `localProgress.test.ts` |
 | P0-10 已学会标记 | 教学页标记、左栏状态、进度页汇总 | `lessonStore.test.ts`、Progress 页面测试 |
@@ -61,6 +61,7 @@
 
 - 用户本人录制的本地 1–8 WAV 口令，可开关；同一音源同时输出到扬声器和对照录制混音总线。资产 manifest 锁定 8 段音频的格式、顺序与校验值。
 - 低置信度提示、自动/固定 120/手动第一拍/手填 BPM 重算。
+- Tap BPM 以最近有效点按间隔的中位数抗手抖，至少 4 次后填入现有固定 BPM 重算入口；三音色节拍器带第 1 拍重音、独立音量和课程持久化，并进入对照录像混音。
 - 拍点偏移采用“草稿 → 重新计算拍子”两段式确认；确认后所有播放/循环功能读取同一新网格，首尾不足 8 拍的小节仍保留并覆盖完整视频时长。
 - 我的课程、断点续学、已学小节、完成度百分比和累计练习时长统计。
 - 摄像头左右对照、录制、下载；老师视频仍由同一个六档循环引擎驱动，开始录制不取消循环。对照 Canvas 写入左上拍数，老师原声+已开启口令混为单音轨；录制镜像写入文件，回看镜像独立。

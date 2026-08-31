@@ -12,6 +12,9 @@ describe('lessonStore (P0-10 learned marking + currentSegment recovery)', () => 
     expect(s.practiceSeconds).toBe(0)
     expect(s.voiceEnabled).toBe(false)
     expect(s.voiceVolume).toBe(1)
+    expect(s.metronomeEnabled).toBe(false)
+    expect(s.metronomeSound).toBe('click')
+    expect(s.metronomeVolume).toBe(0.8)
     expect(s.learnedSegments).toEqual([])
   })
 
@@ -52,6 +55,9 @@ describe('lessonStore (P0-10 learned marking + currentSegment recovery)', () => 
     expect(s.mirror).toBe(true)
     expect(s.learnedSegments).toEqual([])
     expect(s.voiceVolume).toBe(1)
+    expect(s.metronomeEnabled).toBe(false)
+    expect(s.metronomeSound).toBe('click')
+    expect(s.metronomeVolume).toBe(0.8)
   })
 
   it('sets count-command volume and clamps it to 0–200%', () => {
@@ -62,6 +68,21 @@ describe('lessonStore (P0-10 learned marking + currentSegment recovery)', () => 
     useLessonStore.getState().setVoiceVolume(-1)
     expect(useLessonStore.getState().voiceVolume).toBe(0)
     useLessonStore.getState().reset()
+  })
+
+  it('persists the selected metronome sound and clamps its independent volume', () => {
+    const store = useLessonStore.getState()
+    store.setMetronomeEnabled(true)
+    store.setMetronomeSound('wood')
+    store.setMetronomeVolume(1.6)
+    expect(useLessonStore.getState().metronomeEnabled).toBe(true)
+    expect(useLessonStore.getState().metronomeSound).toBe('wood')
+    expect(useLessonStore.getState().metronomeVolume).toBe(1.6)
+    store.setMetronomeVolume(3)
+    expect(useLessonStore.getState().metronomeVolume).toBe(2)
+    store.setMetronomeVolume(-1)
+    expect(useLessonStore.getState().metronomeVolume).toBe(0)
+    store.reset()
   })
 
   it('multi mode requires a selection and clearing the last item disables looping', () => {

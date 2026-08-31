@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { ABLoop } from '../types/api'
+import type { MetronomeSound } from '../audio/countVoiceAudio'
 
 /** Fine-grained modes lock one beat or one half of the current 8-count. */
 export type FocusedLoopMode = 'current' | 'front' | 'back' | 'single'
@@ -29,6 +30,10 @@ export interface LessonState {
   voiceEnabled: boolean
   /** Count-command gain: 0 = mute, 1 = original level, 2 = 200%. */
   voiceVolume: number
+  metronomeEnabled: boolean
+  metronomeSound: MetronomeSound
+  /** Metronome gain, independent from teacher audio and count commands. */
+  metronomeVolume: number
   /** Confirmed beat-grid offset used by the player and segmentation. */
   beatOffset: number
   /** Slider draft; does not alter segmentation until explicitly confirmed. */
@@ -48,6 +53,9 @@ export interface LessonState {
   setABLoop: (v: ABLoop | null) => void
   setVoiceEnabled: (b: boolean) => void
   setVoiceVolume: (n: number) => void
+  setMetronomeEnabled: (b: boolean) => void
+  setMetronomeSound: (sound: MetronomeSound) => void
+  setMetronomeVolume: (n: number) => void
   setBeatOffset: (n: number) => void
   setDraftBeatOffset: (n: number) => void
   setLoopCount: (n: number | null) => void
@@ -74,6 +82,9 @@ export const useLessonStore = create<LessonState>((set) => ({
   abLoop: null,
   voiceEnabled: false,
   voiceVolume: 1,
+  metronomeEnabled: false,
+  metronomeSound: 'click',
+  metronomeVolume: 0.8,
   beatOffset: 0,
   draftBeatOffset: 0,
   loopCount: null,
@@ -130,6 +141,10 @@ export const useLessonStore = create<LessonState>((set) => ({
     })),
   setVoiceEnabled: (b) => set({ voiceEnabled: b }),
   setVoiceVolume: (n) => set({ voiceVolume: Math.max(0, Math.min(2, n)) }),
+  setMetronomeEnabled: (b) => set({ metronomeEnabled: b }),
+  setMetronomeSound: (metronomeSound) => set({ metronomeSound }),
+  setMetronomeVolume: (n) =>
+    set({ metronomeVolume: Math.max(0, Math.min(2, n)) }),
   setBeatOffset: (n) => set({ beatOffset: n }),
   setDraftBeatOffset: (n) => set({ draftBeatOffset: n }),
   setLoopCount: (n) => set({ loopCount: n }),
@@ -157,6 +172,9 @@ export const useLessonStore = create<LessonState>((set) => ({
       abLoop: null,
       voiceEnabled: false,
       voiceVolume: 1,
+      metronomeEnabled: false,
+      metronomeSound: 'click',
+      metronomeVolume: 0.8,
       beatOffset: 0,
       draftBeatOffset: 0,
       loopCount: null,

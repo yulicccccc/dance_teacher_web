@@ -36,6 +36,7 @@ function setup(opts: { mirror: boolean }) {
   const onToggleMirror = vi.fn()
   const onToggleBeatMirror = vi.fn()
   const onToggleVoice = vi.fn()
+  const onToggleMetronome = vi.fn()
   const onToggleLearned = vi.fn()
   const onShowShortcuts = vi.fn()
   const onDotClick = vi.fn()
@@ -65,6 +66,7 @@ function setup(opts: { mirror: boolean }) {
         onToggleMirror={onToggleMirror}
         onToggleBeatMirror={onToggleBeatMirror}
         onToggleVoice={onToggleVoice}
+        onToggleMetronome={onToggleMetronome}
         onToggleLearned={onToggleLearned}
         onShowShortcuts={onShowShortcuts}
         total={3}
@@ -96,6 +98,7 @@ function setup(opts: { mirror: boolean }) {
     onToggleMirror,
     onToggleBeatMirror,
     onToggleVoice,
+    onToggleMetronome,
     onToggleLearned,
     onShowShortcuts,
     onDotClick,
@@ -309,6 +312,7 @@ describe('VideoPlayer general playback gestures', () => {
       onToggleMirror,
       onToggleBeatMirror,
       onToggleVoice,
+      onToggleMetronome,
       onToggleLearned,
       onShowShortcuts,
     } = setup({ mirror: false })
@@ -317,6 +321,7 @@ describe('VideoPlayer general playback gestures', () => {
     keyDown(box, 'm', 'KeyM')
     keyDown(box, 'M', 'KeyM', { shiftKey: true })
     keyDown(box, 'c', 'KeyC')
+    keyDown(box, 'C', 'KeyC', { shiftKey: true })
     keyDown(box, 'd', 'KeyD')
     ;['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6'].forEach((code, i) =>
       keyDown(box, String(i + 1), code),
@@ -330,6 +335,7 @@ describe('VideoPlayer general playback gestures', () => {
     expect(onToggleMirror).toHaveBeenCalledTimes(1)
     expect(onToggleBeatMirror).toHaveBeenCalledTimes(1)
     expect(onToggleVoice).toHaveBeenCalledTimes(1)
+    expect(onToggleMetronome).toHaveBeenCalledTimes(1)
     expect(onToggleLearned).toHaveBeenCalledTimes(1)
     expect(onSelectLoopMode.mock.calls).toEqual([
       ['current'],
