@@ -26,9 +26,51 @@ import ProgressHeader from '../components/ProgressHeader'
 import BeatInfoCard from '../components/BeatInfoCard'
 import { estimateBeatDuration, resegmentSegments, findBeatAt } from '../utils/segmentMath'
 import { resolveCompareSegment } from '../utils/compare'
-import { playCountVoice, stopCountVoice } from '../audio/countVoiceAudio'
+import {
+  playCountVoice,
+  stopCountVoice,
+  unlockCountVoiceAudio,
+} from '../audio/countVoiceAudio'
 import { buildDemoResult, DEMO_VIDEO_URL } from '../demo/sampleLesson'
 import type { AnalysisResult, RecomputeMode } from '../types/api'
+
+const SHORTCUT_GROUPS = [
+  {
+    title: '播放与定位',
+    rows: [
+      ['Space / Enter / K', '播放或暂停'],
+      [', / . / ← / →', '前一拍 / 后一拍，并暂停定格'],
+      ['Shift+← / Shift+→', '上一小节 / 下一小节'],
+      ['[ / ]', '上一小节 / 下一小节'],
+    ],
+  },
+  {
+    title: '速度',
+    rows: [
+      ['Shift+, / Shift+.', '减速 / 加速 0.05×'],
+      ['- / +', '减速 / 加速 0.05×'],
+      ['0', '恢复 1×'],
+    ],
+  },
+  {
+    title: '循环与 AB',
+    rows: [
+      ['R', '开启或关闭当前循环'],
+      ['1 / 2 / 3 / 4 / 5 / 6', '当前 / 前节 / 后节 / 单节 / 多节 / AB'],
+      ['A / B / X', '设置 A / 设置 B / 清除 AB'],
+    ],
+  },
+  {
+    title: '画面与学习',
+    rows: [
+      ['M / Shift+M', '视频镜面 / 拍点镜面'],
+      ['C', '开启或关闭口令'],
+      ['D', '标记或取消当前小节“已学会”'],
+      ['F', '进入或退出全屏'],
+      ['?', '打开这张快捷键表'],
+    ],
+  },
+] as const
 
 export default function LessonPage() {
   const { taskId } = useParams<{ taskId: string }>()
@@ -51,6 +93,7 @@ export default function LessonPage() {
   const [error, setError] = useState<string | null>(null)
   const [recomputing, setRecomputing] = useState(false)
   const [lowConfOpen, setLowConfOpen] = useState(false)
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
   const [firstBeat, setFirstBeat] = useState('0')
   const [snack, setSnack] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
@@ -73,9 +116,15 @@ export default function LessonPage() {
   const loopSegmentIds = useLessonStore((s) => s.loopSegmentIds)
   const abLoop = useLessonStore((s) => s.abLoop)
   const setABLoop = useLessonStore((s) => s.setABLoop)
+  const setPlaybackRate = useLessonStore((s) => s.setPlaybackRate)
+  const setMirror = useLessonStore((s) => s.setMirror)
+  const setBeatMirror = useLessonStore((s) => s.setBeatMirror)
   const learnedSegments = useLessonStore((s) => s.learnedSegments)
   const setSegment = useLessonStore((s) => s.setSegment)
   const setLoopEnabled = useLessonStore((s) => s.setLoopEnabled)
+  const toggleLoopEnabled = useLessonStore((s) => s.toggleLoopEnabled)
+  const setLoopMode = useLessonStore((s) => s.setLoopMode)
+  const setVoiceEnabled = useLessonStore((s) => s.setVoiceEnabled)
   const setBeatOffset = useLessonStore((s) => s.setBeatOffset)
   const toggleLoopSegmentId = useLessonStore((s) => s.toggleLoopSegmentId)
   const setLoopSegmentIds = useLessonStore((s) => s.setLoopSegmentIds)
@@ -416,16 +465,28 @@ export default function LessonPage() {
     if (currentSegment < offsetSegments.length) goToSegment(currentSegment + 1)
   }
 
+  const handleAdjustPlaybackRate = (dir: 1 | -1) => {
+    const current = useLessonStore.getState().playbackRate
+    const next = Math.min(1.5, Math.max(0.25, current + dir * 0.05))
+    setPlaybackRate(Math.round(next * 100) / 100)
+  }
+
+  const handleToggleVoice = () => {
+    const next = !useLessonStore.getState().voiceEnabled
+    if (next) void unlockCountVoiceAudio()
+    setVoiceEnabled(next)
+  }
+
   // ---- Custom A→B loop (beat-anchored) ---------------------------------
   // Anchor each point on the most recent beat at or before the current play
   // position (so the loop seam lines up with the music). A and B are stored as
   // beat times; enabling the loop is mutually exclusive with single-segment
   // looping (enforced in the store).
-  const handleSetAB = (which: 'a' | 'b') => {
+  const handleSetAB = (which: 'a' | 'b'): boolean => {
     const v = videoRef.current
-    if (!v) return
+    if (!v) return false
     const hit = findBeatAt(offsetSegments, v.currentTime)
-    if (!hit) return
+    if (!hit) return false
     const prev = useLessonStore.getState().abLoop
     if (which === 'a') {
       setABLoop({
@@ -444,8 +505,13 @@ export default function LessonPage() {
         bBeat: hit.globalBeat,
       })
     }
+    return true
   }
   const handleClearAB = () => setABLoop(null)
+
+  const handleShortcutSetAB = (which: 'a' | 'b') => {
+    if (handleSetAB(which)) setLoopMode('ab')
+  }
 
   const handleMarkLearned = () => {
     const learned = learnedSegments.includes(currentSegment)
@@ -579,6 +645,22 @@ export default function LessonPage() {
                 pulse={pulse}
                 onTogglePlay={togglePlay}
                 stepBeat={handleStepBeat}
+                onPrevSegment={handlePrev}
+                onNextSegment={handleNext}
+                onAdjustPlaybackRate={handleAdjustPlaybackRate}
+                onResetPlaybackRate={() => setPlaybackRate(1)}
+                onToggleLoop={toggleLoopEnabled}
+                onSelectLoopMode={setLoopMode}
+                onSetA={() => handleShortcutSetAB('a')}
+                onSetB={() => handleShortcutSetAB('b')}
+                onClearAB={handleClearAB}
+                onToggleMirror={() => setMirror(!useLessonStore.getState().mirror)}
+                onToggleBeatMirror={() =>
+                  setBeatMirror(!useLessonStore.getState().beatMirror)
+                }
+                onToggleVoice={handleToggleVoice}
+                onToggleLearned={handleMarkLearned}
+                onShowShortcuts={() => setShortcutHelpOpen(true)}
                 // The overlay dots are 0-based; `Segment.index` (and therefore
                 // `goToSegment`) is 1-based, so convert here. `total` makes the
                 // dot count equal the number of selectable sections.
@@ -623,6 +705,7 @@ export default function LessonPage() {
               onCompare={() => setCompareOpen((o) => !o)}
               comparing={compareOpen}
               onConfirmBeatOffset={handleConfirmBeatOffset}
+              onShowShortcuts={() => setShortcutHelpOpen(true)}
             />
           </Box>
         </Box>
@@ -653,6 +736,51 @@ export default function LessonPage() {
           <Button variant="contained" onClick={() => handleRecompute('manual_first_beat')}>
             手动标第一拍
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={shortcutHelpOpen}
+        onClose={() => setShortcutHelpOpen(false)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>扒舞快捷键</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            先点击一次播放器，再按快捷键。输入框和浏览器组合键不会被占用。
+          </Typography>
+          {SHORTCUT_GROUPS.map((group) => (
+            <Box key={group.title} sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
+                {group.title}
+              </Typography>
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: '1fr', sm: '190px 1fr' },
+                  columnGap: 2,
+                  rowGap: 0.75,
+                }}
+              >
+                {group.rows.map(([keys, action]) => (
+                  <Box key={keys} sx={{ display: 'contents' }}>
+                    <Typography
+                      component="kbd"
+                      variant="body2"
+                      sx={{ fontFamily: 'monospace', fontWeight: 700 }}
+                    >
+                      {keys}
+                    </Typography>
+                    <Typography variant="body2">{action}</Typography>
+                  </Box>
+                ))}
+              </Box>
+            </Box>
+          ))}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShortcutHelpOpen(false)}>知道了</Button>
         </DialogActions>
       </Dialog>
 

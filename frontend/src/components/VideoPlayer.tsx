@@ -3,6 +3,7 @@ import FullscreenIcon from '@mui/icons-material/Fullscreen'
 import FullscreenExitIcon from '@mui/icons-material/FullscreenExit'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import BeatOverlay from './BeatOverlay'
+import type { LoopMode } from '../store/lessonStore'
 
 interface Props {
   src: string
@@ -15,6 +16,20 @@ interface Props {
   onTogglePlay?: () => void
   /** Double-click gesture: seek to the adjacent beat and pause (1 = next, -1 = previous). */
   stepBeat?: (dir: 1 | -1) => void
+  onPrevSegment?: () => void
+  onNextSegment?: () => void
+  onAdjustPlaybackRate?: (dir: 1 | -1) => void
+  onResetPlaybackRate?: () => void
+  onToggleLoop?: () => void
+  onSelectLoopMode?: (mode: LoopMode) => void
+  onSetA?: () => void
+  onSetB?: () => void
+  onClearAB?: () => void
+  onToggleMirror?: () => void
+  onToggleBeatMirror?: () => void
+  onToggleVoice?: () => void
+  onToggleLearned?: () => void
+  onShowShortcuts?: () => void
   /** Beat dot click-through from the overlay (0-based dot index). When the
    *  overlay is used as a *segment* selector the parent passes `total` equal to
    *  the segment count so the dot count matches the selectable sections. */
@@ -43,6 +58,20 @@ export default function VideoPlayer({
   pulse,
   onTogglePlay,
   stepBeat,
+  onPrevSegment,
+  onNextSegment,
+  onAdjustPlaybackRate,
+  onResetPlaybackRate,
+  onToggleLoop,
+  onSelectLoopMode,
+  onSetA,
+  onSetB,
+  onClearAB,
+  onToggleMirror,
+  onToggleBeatMirror,
+  onToggleVoice,
+  onToggleLearned,
+  onShowShortcuts,
   onDotClick,
   total,
 }: Props) {
@@ -144,8 +173,8 @@ export default function VideoPlayer({
       className="relative w-full aspect-video bg-black rounded-xl overflow-hidden"
       role="region"
       tabIndex={0}
-      aria-label="视频播放区：单击播放或暂停；双击左侧上一拍、中间全屏、右侧下一拍；逗号前一拍、句号后一拍"
-      title="单击播放/暂停 · 双击左侧上一拍 · 中间全屏 · 右侧下一拍 · , 前一拍 · . 后一拍"
+      aria-label="视频播放区：单击播放或暂停；双击左侧上一拍、中间全屏、右侧下一拍；按问号查看全部快捷键"
+      title="单击播放/暂停 · 双击逐拍/全屏 · 按 ? 查看全部快捷键"
       onClick={schedulePlaybackToggle}
       // Physical LEFT / CENTRE / RIGHT thirds keep the gesture independent of
       // video mirroring: previous beat / fullscreen / next beat.
@@ -162,25 +191,99 @@ export default function VideoPlayer({
       }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
+        // Preserve browser and operating-system shortcuts such as Cmd/Ctrl+R.
+        if (e.metaKey || e.ctrlKey || e.altKey) return
         const key = e.key.toLowerCase()
+        const loopModeShortcut = e.code.match(/^(?:Digit|Numpad)([1-6])$/)
         if (key === ' ' || key === 'enter' || key === 'k') {
           e.preventDefault()
           if (!e.repeat) onTogglePlay?.()
+        } else if (
+          e.shiftKey &&
+          (e.code === 'Comma' || key === '<' || key === '《')
+        ) {
+          e.preventDefault()
+          onAdjustPlaybackRate?.(-1)
+        } else if (
+          e.shiftKey &&
+          (e.code === 'Period' || key === '>' || key === '》')
+        ) {
+          e.preventDefault()
+          onAdjustPlaybackRate?.(1)
         } else if (e.code === 'Comma' || key === ',' || key === '，') {
           e.preventDefault()
           stepBeat?.(-1)
         } else if (e.code === 'Period' || key === '.' || key === '。') {
           e.preventDefault()
           stepBeat?.(1)
+        } else if (
+          (e.shiftKey && key === 'arrowleft') ||
+          (!e.shiftKey && (e.code === 'BracketLeft' || key === '[' || key === '【'))
+        ) {
+          e.preventDefault()
+          onPrevSegment?.()
+        } else if (
+          (e.shiftKey && key === 'arrowright') ||
+          (!e.shiftKey && (e.code === 'BracketRight' || key === ']' || key === '】'))
+        ) {
+          e.preventDefault()
+          onNextSegment?.()
         } else if (key === 'arrowleft') {
           e.preventDefault()
           stepBeat?.(-1)
         } else if (key === 'arrowright') {
           e.preventDefault()
           stepBeat?.(1)
+        } else if (e.code === 'Minus' || e.code === 'NumpadSubtract' || key === '-') {
+          e.preventDefault()
+          onAdjustPlaybackRate?.(-1)
+        } else if (
+          e.code === 'Equal' ||
+          e.code === 'NumpadAdd' ||
+          key === '=' ||
+          key === '+'
+        ) {
+          e.preventDefault()
+          onAdjustPlaybackRate?.(1)
+        } else if (e.code === 'Digit0' || e.code === 'Numpad0' || key === '0') {
+          e.preventDefault()
+          if (!e.repeat) onResetPlaybackRate?.()
+        } else if (key === 'r') {
+          e.preventDefault()
+          if (!e.repeat) onToggleLoop?.()
+        } else if (key === 'm') {
+          e.preventDefault()
+          if (!e.repeat) {
+            if (e.shiftKey) onToggleBeatMirror?.()
+            else onToggleMirror?.()
+          }
+        } else if (key === 'c') {
+          e.preventDefault()
+          if (!e.repeat) onToggleVoice?.()
+        } else if (key === 'd') {
+          e.preventDefault()
+          if (!e.repeat) onToggleLearned?.()
+        } else if (!e.shiftKey && loopModeShortcut) {
+          e.preventDefault()
+          if (!e.repeat) {
+            const modes: LoopMode[] = ['current', 'front', 'back', 'single', 'multi', 'ab']
+            onSelectLoopMode?.(modes[Number(loopModeShortcut[1]) - 1])
+          }
+        } else if (key === 'a') {
+          e.preventDefault()
+          if (!e.repeat) onSetA?.()
+        } else if (key === 'b') {
+          e.preventDefault()
+          if (!e.repeat) onSetB?.()
+        } else if (key === 'x') {
+          e.preventDefault()
+          if (!e.repeat) onClearAB?.()
         } else if (key === 'f') {
           e.preventDefault()
           if (!e.repeat) toggleFullscreen()
+        } else if (key === '?') {
+          e.preventDefault()
+          if (!e.repeat) onShowShortcuts?.()
         }
       }}
       sx={{ cursor: 'pointer', touchAction: 'manipulation', userSelect: 'none' }}

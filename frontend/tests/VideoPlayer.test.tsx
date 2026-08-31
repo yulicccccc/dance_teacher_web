@@ -24,6 +24,20 @@ function setup(opts: { mirror: boolean }) {
   const videoRef = createRef<HTMLVideoElement>()
   const stepBeat = vi.fn()
   const onTogglePlay = vi.fn()
+  const onPrevSegment = vi.fn()
+  const onNextSegment = vi.fn()
+  const onAdjustPlaybackRate = vi.fn()
+  const onResetPlaybackRate = vi.fn()
+  const onToggleLoop = vi.fn()
+  const onSelectLoopMode = vi.fn()
+  const onSetA = vi.fn()
+  const onSetB = vi.fn()
+  const onClearAB = vi.fn()
+  const onToggleMirror = vi.fn()
+  const onToggleBeatMirror = vi.fn()
+  const onToggleVoice = vi.fn()
+  const onToggleLearned = vi.fn()
+  const onShowShortcuts = vi.fn()
   const onDotClick = vi.fn()
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -39,6 +53,20 @@ function setup(opts: { mirror: boolean }) {
         pulse={false}
         onTogglePlay={onTogglePlay}
         stepBeat={stepBeat}
+        onPrevSegment={onPrevSegment}
+        onNextSegment={onNextSegment}
+        onAdjustPlaybackRate={onAdjustPlaybackRate}
+        onResetPlaybackRate={onResetPlaybackRate}
+        onToggleLoop={onToggleLoop}
+        onSelectLoopMode={onSelectLoopMode}
+        onSetA={onSetA}
+        onSetB={onSetB}
+        onClearAB={onClearAB}
+        onToggleMirror={onToggleMirror}
+        onToggleBeatMirror={onToggleBeatMirror}
+        onToggleVoice={onToggleVoice}
+        onToggleLearned={onToggleLearned}
+        onShowShortcuts={onShowShortcuts}
         total={3}
         onDotClick={onDotClick}
       />,
@@ -56,6 +84,20 @@ function setup(opts: { mirror: boolean }) {
     box,
     stepBeat,
     onTogglePlay,
+    onPrevSegment,
+    onNextSegment,
+    onAdjustPlaybackRate,
+    onResetPlaybackRate,
+    onToggleLoop,
+    onSelectLoopMode,
+    onSetA,
+    onSetB,
+    onClearAB,
+    onToggleMirror,
+    onToggleBeatMirror,
+    onToggleVoice,
+    onToggleLearned,
+    onShowShortcuts,
     onDotClick,
     requestFullscreen,
   }
@@ -105,10 +147,21 @@ function dblClick(el: HTMLElement, clientX: number) {
   })
 }
 
-function keyDown(el: HTMLElement, key: string, code = '') {
+function keyDown(
+  el: HTMLElement,
+  key: string,
+  code = '',
+  modifiers: Pick<KeyboardEventInit, 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey' | 'repeat'> = {},
+) {
   act(() => {
     el.dispatchEvent(
-      new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key, code }),
+      new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key,
+        code,
+        ...modifiers,
+      }),
     )
   })
 }
@@ -216,5 +269,88 @@ describe('VideoPlayer general playback gestures', () => {
     box.appendChild(input)
     keyDown(input, ',', 'Comma')
     expect(stepBeat).toHaveBeenCalledTimes(2)
+  })
+
+  it('supports section navigation and precise playback-rate shortcuts', () => {
+    const {
+      box,
+      stepBeat,
+      onPrevSegment,
+      onNextSegment,
+      onAdjustPlaybackRate,
+      onResetPlaybackRate,
+    } = setup({ mirror: false })
+
+    keyDown(box, 'ArrowLeft', 'ArrowLeft', { shiftKey: true })
+    keyDown(box, 'ArrowRight', 'ArrowRight', { shiftKey: true })
+    keyDown(box, '[', 'BracketLeft')
+    keyDown(box, ']', 'BracketRight')
+    keyDown(box, '<', 'Comma', { shiftKey: true })
+    keyDown(box, '>', 'Period', { shiftKey: true })
+    keyDown(box, '-', 'Minus')
+    keyDown(box, '+', 'Equal', { shiftKey: true })
+    keyDown(box, '0', 'Digit0')
+
+    expect(onPrevSegment).toHaveBeenCalledTimes(2)
+    expect(onNextSegment).toHaveBeenCalledTimes(2)
+    expect(onAdjustPlaybackRate.mock.calls).toEqual([[-1], [1], [-1], [1]])
+    expect(onResetPlaybackRate).toHaveBeenCalledTimes(1)
+    expect(stepBeat).not.toHaveBeenCalled()
+  })
+
+  it('supports loop, AB, mirror, voice, learned and shortcut-help commands', () => {
+    const {
+      box,
+      onToggleLoop,
+      onSelectLoopMode,
+      onSetA,
+      onSetB,
+      onClearAB,
+      onToggleMirror,
+      onToggleBeatMirror,
+      onToggleVoice,
+      onToggleLearned,
+      onShowShortcuts,
+    } = setup({ mirror: false })
+
+    keyDown(box, 'r', 'KeyR')
+    keyDown(box, 'm', 'KeyM')
+    keyDown(box, 'M', 'KeyM', { shiftKey: true })
+    keyDown(box, 'c', 'KeyC')
+    keyDown(box, 'd', 'KeyD')
+    ;['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6'].forEach((code, i) =>
+      keyDown(box, String(i + 1), code),
+    )
+    keyDown(box, 'a', 'KeyA')
+    keyDown(box, 'b', 'KeyB')
+    keyDown(box, 'x', 'KeyX')
+    keyDown(box, '?', 'Slash', { shiftKey: true })
+
+    expect(onToggleLoop).toHaveBeenCalledTimes(1)
+    expect(onToggleMirror).toHaveBeenCalledTimes(1)
+    expect(onToggleBeatMirror).toHaveBeenCalledTimes(1)
+    expect(onToggleVoice).toHaveBeenCalledTimes(1)
+    expect(onToggleLearned).toHaveBeenCalledTimes(1)
+    expect(onSelectLoopMode.mock.calls).toEqual([
+      ['current'],
+      ['front'],
+      ['back'],
+      ['single'],
+      ['multi'],
+      ['ab'],
+    ])
+    expect(onSetA).toHaveBeenCalledTimes(1)
+    expect(onSetB).toHaveBeenCalledTimes(1)
+    expect(onClearAB).toHaveBeenCalledTimes(1)
+    expect(onShowShortcuts).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not steal browser shortcuts or repeat toggle commands', () => {
+    const { box, onToggleLoop, onToggleMirror } = setup({ mirror: false })
+    keyDown(box, 'r', 'KeyR', { metaKey: true })
+    keyDown(box, 'r', 'KeyR', { ctrlKey: true })
+    keyDown(box, 'm', 'KeyM', { repeat: true })
+    expect(onToggleLoop).not.toHaveBeenCalled()
+    expect(onToggleMirror).not.toHaveBeenCalled()
   })
 })

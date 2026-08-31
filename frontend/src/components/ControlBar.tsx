@@ -20,6 +20,7 @@ import FlipIcon from '@mui/icons-material/Flip'
 import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver'
 import VideocamIcon from '@mui/icons-material/Videocam'
 import VideocamOffIcon from '@mui/icons-material/VideocamOff'
+import KeyboardIcon from '@mui/icons-material/Keyboard'
 import { useLessonStore, type LoopMode } from '../store/lessonStore'
 import { findBeatAt } from '../utils/segmentMath'
 import { formatDuration } from '../utils/format'
@@ -46,6 +47,7 @@ interface Props {
   onCompare: () => void
   comparing?: boolean
   onConfirmBeatOffset?: (offset: number) => void
+  onShowShortcuts?: () => void
 }
 
 function formatABPoint(
@@ -94,6 +96,7 @@ export default function ControlBar({
   onCompare,
   comparing = false,
   onConfirmBeatOffset,
+  onShowShortcuts,
 }: Props) {
   const playbackRate = useLessonStore((s) => s.playbackRate)
   const setPlaybackRate = useLessonStore((s) => s.setPlaybackRate)
@@ -289,6 +292,15 @@ export default function ControlBar({
             onClick={onCompare}
           >
             {comparing ? '退出对照' : '对照练习'}
+          </Button>
+        </Tooltip>
+        <Tooltip title="查看扒舞快捷键">
+          <Button
+            variant="outlined"
+            startIcon={<KeyboardIcon />}
+            onClick={onShowShortcuts}
+          >
+            快捷键 ?
           </Button>
         </Tooltip>
       </Stack>

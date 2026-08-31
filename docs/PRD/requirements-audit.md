@@ -1,6 +1,6 @@
 # 舞蹈老师需求总台账
 
-> 最后核对：2026-08-29
+> 最后核对：2026-08-30
 >
 > 权威产品文档：`docs/PRD/PRD-v1.0-complete.md`。本文件作为逐项防回归台账，不替代完整 PRD。
 > 用途：任何重构、回滚和部署都必须逐项检查，避免修一个问题时丢掉别的功能。
@@ -26,7 +26,7 @@
 | P0-2 librosa BPM + 8 拍分段 | 服务端 ffmpeg/librosa，与本地使用同一算法 | 后端 beat/segment 测试；真实 MOV 本地/线上同为 127.15 BPM |
 | P0-3 四阶段分析进度与重试 | queued → extracting → beat_detecting → segmenting → done/failed | `AnalysisPage`、API retry 测试 |
 | P0-4 小节列表、点击跳转、当前节高亮 | 保留；多节模式下该列表同时承担唯一勾选入口 | `SegmentList.multiSelect.test.tsx` |
-| P0-5 播放器基础操作 + 变速/进度 | 单击播放/暂停；双击左/中/右=上一拍/全屏/下一拍；空格/K、←→、F；Movist 风格 `,`/`.` 前后逐拍；0.25x–1.5x 变速与时间轴拖动 | `VideoPlayer.test.tsx`、`ControlBar` |
+| P0-5 播放器基础操作 + 变速/进度 | 单击播放/暂停；双击左/中/右=上一拍/全屏/下一拍；完整扒舞键盘模式覆盖逐拍/逐节、0.05× 调速、六档循环、AB、镜面、口令、已学和全屏；0.25x–1.5x 变速与时间轴拖动 | `VideoPlayer.test.tsx`、`ControlBar.loopButton.test.tsx` |
 | P0-6 分段循环 | 当前、前节、后节、单节、多节、AB 六档模式，共用一个“循环”总开关 | 循环测试组 |
 | P0-7 1–8 数拍 + 脉冲 | rAF 驱动，节拍叠加层独立镜像 | `BeatOverlay.test.tsx`、beat sync 测试 |
 | P0-8 镜像/视角 | 单机位视频镜像默认开；拍点镜像独立控制 | `ControlBar.loopButton.test.tsx`、`VideoPlayer.test.tsx` |
@@ -45,7 +45,7 @@
 | v1.1-3 | 前节/后节/单节左栏秒数与实际引擎同源；上下文拍内切模式不串节 | `SegmentList.multiSelect.test.tsx`、`useBeatSync.multi.test.tsx` |
 | P0-10 | 连续多节合并成一个块；非连续块按顺序轮转；块前后各一拍 | `useBeatSync.multi.test.tsx` |
 | P0-11 | AB 拍点对齐；只有 AB 模式且总开关开启时驱动 AB 引擎 | `abLoop.test.tsx`、LessonPage 映射 |
-| P0-12 | 单击画面播放/暂停；双击左/中/右三区=上一拍/全屏/下一拍，方向不受视频镜像影响 | `VideoPlayer.test.tsx`、`useBeatSync.step.test.tsx` |
+| P0-12 | 单击画面播放/暂停；双击左/中/右三区=上一拍/全屏/下一拍，方向不受视频镜像影响；播放器聚焦时 `?` 打开完整按键表 | `VideoPlayer.test.tsx`、`useBeatSync.step.test.tsx` |
 | P0-13 | 新状态字段和旧 `loopSegment` / `abLoop.enabled` 存档迁移 | `localProgress.test.ts` |
 | P0-14 | 切模式只改 store，不 seek、不暂停 | store 单元测试 + 引擎模式回归 |
 | P1-1 | 状态摘要：关闭、当前三拍、前/后半节、单节、多节区间折叠、AB 端点 | `ControlBar` |
@@ -64,7 +64,7 @@
 - 拍点偏移采用“草稿 → 重新计算拍子”两段式确认；确认后所有播放/循环功能读取同一新网格，首尾不足 8 拍的小节仍保留并覆盖完整视频时长。
 - 我的课程、断点续学、已学小节、完成度百分比和累计练习时长统计。
 - 摄像头左右对照、录制、下载；老师视频仍由同一个六档循环引擎驱动，开始录制不取消循环。对照 Canvas 写入左上拍数，老师原声+已开启口令混为单音轨；录制镜像写入文件，回看镜像独立。
-- 内置示例、单击画面播放/暂停、双击三区逐拍/全屏、基础键盘操作、循环次数限制。
+- 内置示例、单击画面播放/暂停、双击三区逐拍/全屏、完整扒舞快捷键及内置帮助、循环次数限制。
 
 ## 5. 已登记的后续阶段（不是本轮遗漏）
 

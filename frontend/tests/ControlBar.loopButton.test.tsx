@@ -15,7 +15,10 @@ const segments: Segment[] = Array.from({ length: 3 }, (_, i) => ({
   beats: Array.from({ length: 8 }, (_, beat) => i * 4 + beat * 0.5),
 }))
 
-function setup(onConfirmBeatOffset?: (offset: number) => void) {
+function setup(
+  onConfirmBeatOffset?: (offset: number) => void,
+  onShowShortcuts?: () => void,
+) {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -41,6 +44,7 @@ function setup(onConfirmBeatOffset?: (offset: number) => void) {
         onClearAB={noop}
         onCompare={noop}
         onConfirmBeatOffset={onConfirmBeatOffset}
+        onShowShortcuts={onShowShortcuts}
       />,
     )
   })
@@ -76,6 +80,13 @@ describe('ControlBar loop-redesign contract', () => {
       container.querySelectorAll('[aria-label="循环模式"] button'),
     ).map((item) => item.textContent?.trim())
     expect(labels).toEqual(['当前', '前节', '后节', '单节', '多节', 'AB'])
+  })
+
+  it('keeps the complete shortcut guide discoverable from the control bar', () => {
+    const onShowShortcuts = vi.fn()
+    const container = setup(undefined, onShowShortcuts)
+    act(() => button(container, '快捷键 ?').click())
+    expect(onShowShortcuts).toHaveBeenCalledTimes(1)
   })
 
   it('disables multi loop until the left-list selection is non-empty', () => {
