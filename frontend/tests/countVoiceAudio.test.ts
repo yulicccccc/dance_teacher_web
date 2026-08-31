@@ -119,4 +119,11 @@ describe('shared count-command audio bus', () => {
     expect(oscillator.start).toHaveBeenCalledWith(10)
     expect(oscillator.stop).toHaveBeenCalledWith(10.08)
   })
+
+  it('keeps a double-time midpoint unaccented even after dance count 8', async () => {
+    const { playMetronomeBeat } = await import('../src/audio/countVoiceAudio')
+    await playMetronomeBeat(1, 'click', 1, false)
+
+    expect(oscillator.frequency.setValueAtTime).toHaveBeenCalledWith(1200, 10)
+  })
 })

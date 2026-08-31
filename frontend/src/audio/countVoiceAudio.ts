@@ -153,6 +153,7 @@ export async function playMetronomeBeat(
   beat: number,
   sound: MetronomeSound = 'click',
   volume = 0.8,
+  accentOverride?: boolean,
 ): Promise<void> {
   if (beat < 1 || beat > 8) return
   const audioContext = getAudioContext()
@@ -165,7 +166,7 @@ export async function playMetronomeBeat(
   }
 
   const spec = METRONOME_SOUNDS[sound]
-  const accented = beat === 1
+  const accented = accentOverride ?? (beat === 1)
   const now = audioContext.currentTime
   const oscillator = audioContext.createOscillator()
   const gain = audioContext.createGain()

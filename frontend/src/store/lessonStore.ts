@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ABLoop } from '../types/api'
 import type { MetronomeSound } from '../audio/countVoiceAudio'
+import type { MetronomeRate } from '../audio/metronomeTiming'
 
 /** Fine-grained modes lock one beat or one half of the current 8-count. */
 export type FocusedLoopMode = 'current' | 'front' | 'back' | 'single'
@@ -32,6 +33,8 @@ export interface LessonState {
   voiceVolume: number
   metronomeEnabled: boolean
   metronomeSound: MetronomeSound
+  /** Audible click density; does not alter the detected BPM or beat grid. */
+  metronomeRate: MetronomeRate
   /** Metronome gain, independent from teacher audio and count commands. */
   metronomeVolume: number
   /** Confirmed beat-grid offset used by the player and segmentation. */
@@ -55,6 +58,7 @@ export interface LessonState {
   setVoiceVolume: (n: number) => void
   setMetronomeEnabled: (b: boolean) => void
   setMetronomeSound: (sound: MetronomeSound) => void
+  setMetronomeRate: (rate: MetronomeRate) => void
   setMetronomeVolume: (n: number) => void
   setBeatOffset: (n: number) => void
   setDraftBeatOffset: (n: number) => void
@@ -84,6 +88,7 @@ export const useLessonStore = create<LessonState>((set) => ({
   voiceVolume: 1,
   metronomeEnabled: false,
   metronomeSound: 'click',
+  metronomeRate: 'normal',
   metronomeVolume: 0.8,
   beatOffset: 0,
   draftBeatOffset: 0,
@@ -143,6 +148,7 @@ export const useLessonStore = create<LessonState>((set) => ({
   setVoiceVolume: (n) => set({ voiceVolume: Math.max(0, Math.min(2, n)) }),
   setMetronomeEnabled: (b) => set({ metronomeEnabled: b }),
   setMetronomeSound: (metronomeSound) => set({ metronomeSound }),
+  setMetronomeRate: (metronomeRate) => set({ metronomeRate }),
   setMetronomeVolume: (n) =>
     set({ metronomeVolume: Math.max(0, Math.min(2, n)) }),
   setBeatOffset: (n) => set({ beatOffset: n }),
@@ -174,6 +180,7 @@ export const useLessonStore = create<LessonState>((set) => ({
       voiceVolume: 1,
       metronomeEnabled: false,
       metronomeSound: 'click',
+      metronomeRate: 'normal',
       metronomeVolume: 0.8,
       beatOffset: 0,
       draftBeatOffset: 0,

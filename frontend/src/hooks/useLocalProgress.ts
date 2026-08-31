@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AnalysisResult, ABLoop } from '../types/api'
 import type { LoopMode } from '../store/lessonStore'
 import type { MetronomeSound } from '../audio/countVoiceAudio'
+import type { MetronomeRate } from '../audio/metronomeTiming'
 
 /**
  * Local-first progress store (PRD P0-9). Mirrors the schema in
@@ -31,6 +32,7 @@ export interface LessonProgress {
   voiceVolume: number
   metronomeEnabled: boolean
   metronomeSound: MetronomeSound
+  metronomeRate: MetronomeRate
   metronomeVolume: number
   beatOffset: number
   learnedSegments: number[]
@@ -92,6 +94,10 @@ export function normalizeLessonProgress(raw: LegacyLessonProgress): LessonProgre
     raw.metronomeSound === 'wood' || raw.metronomeSound === 'beep'
       ? raw.metronomeSound
       : 'click'
+  const metronomeRate: MetronomeRate =
+    raw.metronomeRate === 'half' || raw.metronomeRate === 'double'
+      ? raw.metronomeRate
+      : 'normal'
 
   return {
     currentSegment: raw.currentSegment ?? 1,
@@ -107,6 +113,7 @@ export function normalizeLessonProgress(raw: LegacyLessonProgress): LessonProgre
     voiceVolume: Math.max(0, Math.min(2, raw.voiceVolume ?? 1)),
     metronomeEnabled: raw.metronomeEnabled ?? false,
     metronomeSound,
+    metronomeRate,
     metronomeVolume: Math.max(0, Math.min(2, raw.metronomeVolume ?? 0.8)),
     beatOffset: raw.beatOffset ?? 0,
     learnedSegments: sortSegments(raw.learnedSegments ?? []),

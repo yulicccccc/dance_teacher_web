@@ -142,6 +142,11 @@ describe('ControlBar loop-redesign contract', () => {
     expect(container.textContent).toContain('清脆')
     expect(container.textContent).toContain('木鱼')
     expect(container.textContent).toContain('电子')
+    expect(container.textContent).toContain('慢拍 ½×')
+    expect(container.textContent).toContain('正常 1×')
+    expect(container.textContent).toContain('快拍 2×')
+    act(() => button(container, '快拍 2×').click())
+    expect(useLessonStore.getState().metronomeRate).toBe('double')
     expect(container.querySelector('[aria-label="节拍器音量"]')).not.toBeNull()
   })
 

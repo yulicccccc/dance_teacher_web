@@ -31,6 +31,7 @@ import {
   unlockMetronomeAudio,
   type MetronomeSound,
 } from '../audio/countVoiceAudio'
+import type { MetronomeRate } from '../audio/metronomeTiming'
 
 interface Props {
   playing: boolean
@@ -123,6 +124,8 @@ export default function ControlBar({
   const setMetronomeEnabled = useLessonStore((s) => s.setMetronomeEnabled)
   const metronomeSound = useLessonStore((s) => s.metronomeSound)
   const setMetronomeSound = useLessonStore((s) => s.setMetronomeSound)
+  const metronomeRate = useLessonStore((s) => s.metronomeRate)
+  const setMetronomeRate = useLessonStore((s) => s.setMetronomeRate)
   const metronomeVolume = useLessonStore((s) => s.metronomeVolume)
   const setMetronomeVolume = useLessonStore((s) => s.setMetronomeVolume)
   const beatOffset = useLessonStore((s) => s.beatOffset)
@@ -310,6 +313,22 @@ export default function ControlBar({
         </Tooltip>
         {metronomeEnabled && (
           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+            <Typography variant="body2" color="text.secondary">
+              节拍速度
+            </Typography>
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={metronomeRate}
+              onChange={(_, value: MetronomeRate | null) =>
+                value && setMetronomeRate(value)
+              }
+              aria-label="节拍器速度"
+            >
+              <ToggleButton value="half">慢拍 ½×</ToggleButton>
+              <ToggleButton value="normal">正常 1×</ToggleButton>
+              <ToggleButton value="double">快拍 2×</ToggleButton>
+            </ToggleButtonGroup>
             <ToggleButtonGroup
               exclusive
               size="small"

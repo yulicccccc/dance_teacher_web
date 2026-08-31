@@ -34,6 +34,11 @@ import {
   unlockCountVoiceAudio,
   unlockMetronomeAudio,
 } from '../audio/countVoiceAudio'
+import {
+  buildMetronomeMidpoints,
+  crossedMetronomeMidpoint,
+  shouldPlayMetronomeBoundary,
+} from '../audio/metronomeTiming'
 import { buildDemoResult, DEMO_VIDEO_URL } from '../demo/sampleLesson'
 import type { AnalysisResult, RecomputeMode } from '../types/api'
 
@@ -113,6 +118,7 @@ export default function LessonPage() {
   const voiceVolume = useLessonStore((s) => s.voiceVolume)
   const metronomeEnabled = useLessonStore((s) => s.metronomeEnabled)
   const metronomeSound = useLessonStore((s) => s.metronomeSound)
+  const metronomeRate = useLessonStore((s) => s.metronomeRate)
   const metronomeVolume = useLessonStore((s) => s.metronomeVolume)
   const beatOffset = useLessonStore((s) => s.beatOffset)
   const draftBeatOffset = useLessonStore((s) => s.draftBeatOffset)
@@ -159,6 +165,10 @@ export default function LessonPage() {
   // beats. Derive the beat interval from timestamps, not segment durations, so
   // covering 0..duration cannot distort offset or padding math.
   const beatDuration = useMemo(() => estimateBeatDuration(segments), [segments])
+  const metronomeMidpoints = useMemo(
+    () => buildMetronomeMidpoints(offsetSegments, beatDuration, result?.duration),
+    [offsetSegments, beatDuration, result?.duration],
+  )
   const abLoopForEngine =
     loopEnabled && loopMode === 'ab' && abLoop && abLoop.aTime < abLoop.bTime
       ? { ...abLoop, enabled: true }
@@ -232,6 +242,7 @@ export default function LessonPage() {
               voiceVolume: p.voiceVolume ?? 1,
               metronomeEnabled: p.metronomeEnabled ?? false,
               metronomeSound: p.metronomeSound ?? 'click',
+              metronomeRate: p.metronomeRate ?? 'normal',
               metronomeVolume: p.metronomeVolume ?? 0.8,
               beatOffset: p.beatOffset ?? 0,
               draftBeatOffset: p.beatOffset ?? 0,
@@ -260,6 +271,7 @@ export default function LessonPage() {
                 voiceVolume: 1,
                 metronomeEnabled: false,
                 metronomeSound: 'click',
+                metronomeRate: 'normal',
                 metronomeVolume: 0.8,
                 beatOffset: 0,
                 learnedSegments: [],
@@ -356,6 +368,7 @@ export default function LessonPage() {
       voiceVolume,
       metronomeEnabled,
       metronomeSound,
+      metronomeRate,
       metronomeVolume,
       beatOffset,
       learnedSegments,
@@ -378,6 +391,7 @@ export default function LessonPage() {
     voiceVolume,
     metronomeEnabled,
     metronomeSound,
+    metronomeRate,
     metronomeVolume,
     beatOffset,
     learnedSegments,
@@ -394,12 +408,60 @@ export default function LessonPage() {
   }, [beatIndex, voiceEnabled, voiceVolume])
 
   useEffect(() => {
-    if (metronomeEnabled && beatIndex > 0) {
+    if (
+      metronomeEnabled &&
+      shouldPlayMetronomeBoundary(beatIndex, metronomeRate)
+    ) {
       void playMetronomeBeat(beatIndex, metronomeSound, metronomeVolume)
     } else {
       stopMetronome()
     }
-  }, [beatIndex, metronomeEnabled, metronomeSound, metronomeVolume])
+  }, [
+    beatIndex,
+    metronomeEnabled,
+    metronomeRate,
+    metronomeSound,
+    metronomeVolume,
+  ])
+
+  // Double-time clicks are fired when the VIDEO crosses a real midpoint, not
+  // by a wall-clock timer. This stays aligned through slow motion, pause,
+  // seeking and every programmatic loop-back.
+  useEffect(() => {
+    if (!metronomeEnabled || metronomeRate !== 'double') return
+    const video = videoRef.current
+    if (!video || metronomeMidpoints.length === 0) return
+    let previousTime = video.currentTime
+    let frame = 0
+    const resetPreviousTime = () => {
+      previousTime = video.currentTime
+    }
+    const tick = () => {
+      const nextTime = video.currentTime
+      if (
+        !video.paused &&
+        !video.seeking &&
+        crossedMetronomeMidpoint(metronomeMidpoints, previousTime, nextTime)
+      ) {
+        void playMetronomeBeat(1, metronomeSound, metronomeVolume, false)
+      }
+      previousTime = nextTime
+      frame = requestAnimationFrame(tick)
+    }
+    video.addEventListener('seeked', resetPreviousTime)
+    frame = requestAnimationFrame(tick)
+    return () => {
+      cancelAnimationFrame(frame)
+      video.removeEventListener('seeked', resetPreviousTime)
+    }
+  }, [
+    metronomeEnabled,
+    metronomeMidpoints,
+    metronomeRate,
+    metronomeSound,
+    metronomeVolume,
+    videoRef,
+  ])
 
   useEffect(
     () => () => {

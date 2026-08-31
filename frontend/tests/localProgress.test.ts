@@ -61,6 +61,7 @@ function progress(over: Partial<LessonProgress> = {}): LessonProgress {
     voiceVolume: 1,
     metronomeEnabled: false,
     metronomeSound: 'click',
+    metronomeRate: 'normal',
     metronomeVolume: 0.8,
     beatOffset: 0,
     learnedSegments: [],
@@ -105,15 +106,18 @@ describe('loop progress migration', () => {
     const legacy = normalizeLessonProgress({})
     expect(legacy.metronomeEnabled).toBe(false)
     expect(legacy.metronomeSound).toBe('click')
+    expect(legacy.metronomeRate).toBe('normal')
     expect(legacy.metronomeVolume).toBe(0.8)
 
     const saved = normalizeLessonProgress({
       metronomeEnabled: true,
       metronomeSound: 'wood',
+      metronomeRate: 'half',
       metronomeVolume: 9,
     })
     expect(saved.metronomeEnabled).toBe(true)
     expect(saved.metronomeSound).toBe('wood')
+    expect(saved.metronomeRate).toBe('half')
     expect(saved.metronomeVolume).toBe(2)
   })
 
