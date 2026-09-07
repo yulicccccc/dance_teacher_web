@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import APP_VERSION, app
 from app.core.config import TASKS_DIR
 from app.models.task import AnalysisTask
 from app.services.task_manager import task_manager
@@ -22,7 +23,11 @@ client = TestClient(app)
 def test_health_endpoints():
     r = client.get("/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok", "version": "1.2.9"}
+    assert r.json() == {"status": "ok", "version": APP_VERSION}
+    release_version = (
+        Path(__file__).resolve().parents[2] / "VERSION"
+    ).read_text(encoding="utf-8").strip()
+    assert APP_VERSION == release_version
     r2 = client.get("/api/v1/health")
     assert r2.status_code == 200
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +14,28 @@ from .routers import analysis, upload
 
 ensure_dirs()
 
-APP_VERSION = "1.2.9"
+
+def _read_app_version() -> str:
+    """Read one release version in local, test, and container layouts."""
+    configured = os.environ.get("APP_VERSION", "").strip()
+    if configured:
+        return configured
+
+    main_file = Path(__file__).resolve()
+    for candidate in (
+        main_file.parents[1] / "VERSION",  # Docker: /app/VERSION
+        main_file.parents[2] / "VERSION",  # Source tree: <project>/VERSION
+    ):
+        try:
+            version = candidate.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if version:
+            return version
+    return "unknown"
+
+
+APP_VERSION = _read_app_version()
 
 
 @asynccontextmanager

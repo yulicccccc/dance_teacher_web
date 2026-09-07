@@ -294,7 +294,7 @@ interface LessonState {
 ### 5.2 路线 B 后端（当前代码，若 §1 选 B 维持）
 - **栈**：FastAPI + `librosa` + `soundfile` + `ffmpeg-python`；`ANALYSIS_SR=22050, HOP_TRACK=256, HOP_FINE=128`。
 - **坑 B1**：`librosa` 拉 `numba/llvmlite`，Python 3.13 本地需编译器；**Dockerfile 用 `python:3.11-slim` 规避**。一律走 Docker。
-- **坑 B2**：`octave` 裁决搬到点周期上（`OCTAVE_F_MARGIN=0.15`），不变量 `60/median(diff)==bpm` 结构性成立；`RECOVER_CEIL_BPM=260` 解耦恢复上限与 `FAST_BEAT_BPM`（220/240 快歌恢复全速）。
+- **坑 B2（已被 v1.3.0 更新）**：`octave` 裁决搬到点周期上（`OCTAVE_F_MARGIN=0.15`），不变量 `60/median(diff)==bpm` 结构性成立；`RECOVER_CEIL_BPM=260` 仅用于发现候选，超过 200 BPM 的声学细分默认折为半速舞蹈计数并降置信，避免真实 118 BPM 课程被误报 234.91。
 - **坑 B3**：176–204 BPM 曾报半速，用低频 onset 包络加密门修复（带限 30–250Hz、双条件 `ratio>=0.55 && contrast>=8.0`）。
 - **坑 B4**：前端 `api/client.ts` base = `import.meta.env.VITE_API_BASE ?? '/api/v1'`；后端 `main.py` 用 `StaticFiles` 托管 `frontend-dist` + SPA fallback。
 - **坑 B5**：大文件上传分块（4MB）、幂等、自动重试。

@@ -23,6 +23,7 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY VERSION .
 COPY backend/ .
 COPY --from=frontend-builder /build/frontend/dist ${FRONTEND_DIST}
 

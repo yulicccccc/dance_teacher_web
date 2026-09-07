@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Box,
   Button,
@@ -23,6 +23,18 @@ export interface BeatInfoCardProps {
 
 const BPM_MIN = 40
 const BPM_MAX = 300
+
+export function alternativeTempoCandidates(bpm: number): Array<{
+  label: '半速' | '倍速'
+  bpm: number
+}> {
+  const candidates: Array<{ label: '半速' | '倍速'; bpm: number }> = []
+  const half = Math.round((bpm / 2) * 10) / 10
+  const double = Math.round(bpm * 2 * 10) / 10
+  if (half >= BPM_MIN) candidates.push({ label: '半速', bpm: half })
+  if (double <= BPM_MAX) candidates.push({ label: '倍速', bpm: double })
+  return candidates
+}
 
 /** Robust tempo estimate: the median keeps one early/late tap from dominating. */
 export function estimateTappedBpm(tapTimes: number[]): number | null {
@@ -66,10 +78,15 @@ export default function BeatInfoCard({
   const [tapTimes, setTapTimes] = useState<number[]>([])
   const [tapBpm, setTapBpm] = useState<number | null>(null)
 
+  useEffect(() => {
+    setInput(bpm.toFixed(1))
+  }, [bpm])
+
   const parsed = parseFloat(input)
   const isValid = !Number.isNaN(parsed) && parsed >= BPM_MIN && parsed <= BPM_MAX
   const level = confidenceLevel(confidence)
   const disabled = !isValid || loading
+  const alternatives = alternativeTempoCandidates(bpm)
 
   const handleApply = () => {
     if (disabled) return
@@ -161,6 +178,27 @@ export default function BeatInfoCard({
             ? `点按估算：${tapBpm.toFixed(1)} BPM${tapTimes.length >= 4 ? '，已填入上方' : '，继续点到 4 下更稳'}`
             : '听着音乐每拍点一下；停顿超过 2 秒会自动重新开始。'}
         </Typography>
+        {alternatives.length > 0 && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+            <Typography variant="caption" color="text.secondary">
+              如果听起来正好差一倍，可直接试另一个舞蹈计数层：
+            </Typography>
+            {alternatives.map((candidate) => (
+              <Button
+                key={candidate.label}
+                size="small"
+                variant="text"
+                disabled={loading}
+                onClick={() => {
+                  setInput(candidate.bpm.toFixed(1))
+                  onApplyBpm(candidate.bpm)
+                }}
+              >
+                试{candidate.label} {candidate.bpm.toFixed(1)}
+              </Button>
+            ))}
+          </Box>
+        )}
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
           判断技巧：节拍器越播越偏通常是 BPM 不对；始终固定错同样的拍数，通常是第一拍，需要调“拍点偏移”。
         </Typography>

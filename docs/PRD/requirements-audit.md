@@ -1,6 +1,6 @@
 # 舞蹈老师需求总台账
 
-> 最后核对：2026-08-30
+> 最后核对：2026-09-07
 >
 > 权威产品文档：`docs/PRD/PRD-v1.0-complete.md`。本文件作为逐项防回归台账，不替代完整 PRD。
 > 用途：任何重构、回滚和部署都必须逐项检查，避免修一个问题时丢掉别的功能。
@@ -23,7 +23,7 @@
 | PRD | 当前实现 | 验证入口 |
 |---|---|---|
 | P0-1 本地文件 + URL、进度、失败重试 | 本地/URL 均保留；大文件 4MB 分块、幂等上传、自动重试 | `Uploader`、`client.test.ts`、`uploader.test.tsx` |
-| P0-2 librosa BPM + 8 拍分段 | 服务端 ffmpeg/librosa，与本地使用同一算法；可手填或 Tap BPM 后固定重算 | 后端 beat/segment 测试；`BeatInfoCard.tapTempo.test.tsx` |
+| P0-2 librosa BPM + 8 拍分段 | 服务端 ffmpeg/librosa，与本地使用同一算法；>200 BPM 声学细分默认折为可练的半速舞蹈计数并降置信；可一键试半速/倍速、手填或 Tap BPM 后固定重算 | 后端 beat/segment/false-double 测试；本机 5 首 golden；`BeatInfoCard.tapTempo.test.tsx` |
 | P0-3 四阶段分析进度与重试 | queued → extracting → beat_detecting → segmenting → done/failed | `AnalysisPage`、API retry 测试 |
 | P0-4 小节列表、点击跳转、当前节高亮 | 保留；多节模式下该列表同时承担唯一勾选入口 | `SegmentList.multiSelect.test.tsx` |
 | P0-5 播放器基础操作 + 变速/进度 | 单击播放/暂停；双击左/中/右=上一拍/全屏/下一拍；完整扒舞键盘模式覆盖逐拍/逐节、0.05× 调速、六档循环、AB、镜面、口令、已学和全屏；0.25x–1.5x 变速与时间轴拖动 | `VideoPlayer.test.tsx`、`ControlBar.loopButton.test.tsx` |
@@ -60,7 +60,7 @@
 ## 4. 已有增强能力（不得回归）
 
 - 用户本人录制的本地 1–8 WAV 口令，可开关；同一音源同时输出到扬声器和对照录制混音总线。资产 manifest 锁定 8 段音频的格式、顺序与校验值。
-- 低置信度提示、自动/固定 120/手动第一拍/手填 BPM 重算。
+- 低置信度提示、自动/固定 120/手动第一拍/手填 BPM 重算；节拍信息卡可一键试当前结果的半速/倍速计数层。
 - Tap BPM 以最近有效点按间隔的中位数抗手抖，至少 4 次后填入现有固定 BPM 重算入口；三音色节拍器带 ½×/1×/2× 提示密度、第 1 拍重音、独立音量和课程持久化，并进入对照录像混音。节拍速度只改变提示音，不改课程 BPM、拍点或循环。
 - 拍点偏移采用“草稿 → 重新计算拍子”两段式确认；确认后所有播放/循环功能读取同一新网格，首尾不足 8 拍的小节仍保留并覆盖完整视频时长。
 - 我的课程、断点续学、已学小节、完成度百分比和累计练习时长统计。
@@ -76,5 +76,5 @@
 
 ## 6. 发布门槛
 
-每次发布至少通过：前端 typecheck + 全量 Vitest、后端全量 pytest、Docker 构建，
+每次发布至少通过：前端 typecheck + 全量 Vitest、后端全量 pytest、Docker 构建；根目录、容器与 `/health` 必须使用同一版本号，
 并在正式 URL 用真实 MOV 验证上传、BPM/置信度、六档循环和手机端播放。

@@ -127,8 +127,8 @@ OCTAVE_F_MARGIN = 0.15
 # --- Genuine-fast recovery (low-band evidence) -------------------------------
 #
 # `_resolve_octave` only ever fires when the fitted tempo is *outside*
-# [SLOW_BEAT_BPM, FAST_BEAT_BPM]. A genuinely fast track — 176-240 BPM
-# drum'n'bass, fast K-pop/EDM — is therefore left at half tempo: the global
+# [SLOW_BEAT_BPM, FAST_BEAT_BPM]. A dense track — 176-240 BPM acoustic pulse —
+# can therefore be left at half tempo: the global
 # uniform-grid fit locks onto the half-tempo lattice (the kick/snare accents
 # land on every *other* fast beat), 88 BPM is comfortably inside the band, so
 # nothing asks for a move and no octave resolution is invoked. The result is
@@ -217,18 +217,25 @@ OCTAVE_BAND_SLACK = 0.02
 # `_recover_fast_period` / `_recover_fast_beats` may only *halve* a grid, so the
 # only thing their guard must rule out is the doubled tempo walking *above* some
 # ceiling. That ceiling used to be `FAST_BEAT_BPM` (200) — which is correct for
-# the band-driven `_resolve_octave`, but wrong here: a genuinely 220/240 BPM
-# track fitted at half tempo has a doubled tempo of 220/240, comfortably under
-# the band edge + slack was *not* guaranteed, so the recovery was refused and
-# the track reported at half speed.
+# the band-driven `_resolve_octave`, but too narrow for discovering a 220/240
+# acoustic candidate fitted at half tempo.  We still need to know that candidate
+# exists so confidence can reflect the ambiguity, even though the final lesson
+# now deliberately stays at the more countable half-time layer above 200 BPM.
 #
-# We therefore give the recovery its own, higher ceiling (260) that is entirely
-# independent of `FAST_BEAT_BPM`. `_resolve_octave`'s band and the fast-recovery
-# ceiling are two different jobs and must not share a number: changing one must
-# never silently change the other. The recovery is still gated by low-band
-# evidence (`_midpoints_are_beats`), so the higher ceiling cannot double a
-# genuine slow/medium track — it only lets the *fast* ones through.
+# The recovery therefore keeps its own evidence ceiling (260), independent of
+# `FAST_BEAT_BPM`. `_resolve_octave`'s band and candidate discovery are two
+# different jobs.  The final dance-count policy below folds any accepted result
+# above 200 back to half time; this is required because real off-beat bass disproved
+# the older assumption that low-band evidence could never double medium material.
 RECOVER_CEIL_BPM = 260
+
+# A dance lesson needs a countable pulse, not necessarily the fastest acoustic
+# subdivision in the mix.  Evidence for a 220/240 BPM layer is still useful,
+# but the normal lesson grid stays at half time above FAST_BEAT_BPM; the player
+# already offers a 2x metronome when the dancer wants to hear those subdivisions.
+# Keeping this separate from RECOVER_CEIL_BPM is intentional: 260 controls which
+# candidates we inspect, while FAST_BEAT_BPM controls which one we teach with.
+OCTAVE_AMBIGUOUS_CONFIDENCE = 0.49
 
 # --- Competing rhythmic-layer arbitration ----------------------------------
 #
@@ -1446,6 +1453,7 @@ def detect(
     # break the analysis, hence the blanket try/except.
     grid_period = 0.0
     use_grid = False
+    octave_ambiguous = False
     if len(raw_times) >= 4:
         try:
             raw_arr = np.asarray(raw_times, dtype=float)
@@ -1560,6 +1568,20 @@ def detect(
     else:
         bpm = round(float(DEFAULT_BPM), 2)
 
+    # Dance-count policy: a >200 BPM acoustic lattice is usually the eighth-note
+    # subdivision of a 100-120 BPM dance pulse.  Low-band midpoint evidence alone
+    # cannot distinguish a genuinely very fast song from a medium song with a
+    # staccato off-beat bass line; the user's 118 BPM course was a real counter-
+    # example and was silently promoted to 234.91 BPM.  Preserve the detected
+    # candidate as an ambiguity signal, but teach from every other beat.  The 2x
+    # metronome remains available for the denser layer.
+    if bpm > FAST_BEAT_BPM * (1.0 + OCTAVE_BAND_SLACK) and len(beat_times) >= 4:
+        half_time = _sparsify_beats(beat_times)
+        if len(half_time) >= 2:
+            beat_times = half_time
+            bpm = round(_effective_tempo_median(beat_times), 2)
+            octave_ambiguous = True
+
     # Confidence. The two output paths need *different* measures:
     #
     #   * grid path — the emitted beats are perfectly even by construction, so
@@ -1572,4 +1594,6 @@ def detect(
         confidence = _grid_path_confidence(env_fine, sr, HOP_FINE, beat_times)
     else:
         confidence = _confidence(beat_times)
+    if octave_ambiguous:
+        confidence = min(confidence, OCTAVE_AMBIGUOUS_CONFIDENCE)
     return bpm, confidence, beat_times, duration

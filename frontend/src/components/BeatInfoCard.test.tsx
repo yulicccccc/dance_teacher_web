@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
-import BeatInfoCard from './BeatInfoCard'
+import BeatInfoCard, { alternativeTempoCandidates } from './BeatInfoCard'
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -106,5 +106,24 @@ describe('BeatInfoCard', () => {
     const { container } = renderCard({ loading: true })
     const btn = container.querySelector('button') as HTMLButtonElement
     expect(btn.disabled).toBe(true)
+  })
+
+  it('offers half-time and double-time dance-count candidates', () => {
+    expect(alternativeTempoCandidates(118)).toEqual([
+      { label: '半速', bpm: 59 },
+      { label: '倍速', bpm: 236 },
+    ])
+    expect(alternativeTempoCandidates(180)).toEqual([{ label: '半速', bpm: 90 }])
+  })
+
+  it('applies an alternative tempo with one click', () => {
+    const { container, onApplyBpm } = renderCard({ bpm: 118 })
+    const candidate = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('试倍速 236.0'),
+    ) as HTMLButtonElement
+
+    act(() => candidate.click())
+
+    expect(onApplyBpm).toHaveBeenCalledWith(236)
   })
 })
