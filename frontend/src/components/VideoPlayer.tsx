@@ -14,7 +14,7 @@ interface Props {
   pulse: boolean
   /** Single-click / keyboard playback toggle supplied by the page controller. */
   onTogglePlay?: () => void
-  /** Double-click gesture: seek to the adjacent beat and pause (1 = next, -1 = previous). */
+  /** Seek to the adjacent beat and pause (1 = next, -1 = previous). */
   stepBeat?: (dir: 1 | -1) => void
   onPrevSegment?: () => void
   onNextSegment?: () => void
@@ -131,6 +131,19 @@ export default function VideoPlayer({
     }, 220)
   }
 
+  const stepBeatFromKeyboard = (dir: 1 | -1) => {
+    if (!stepBeat) return
+    const video = videoRef.current
+    const wasPlaying = video?.paused === false
+    // The shared beat-step primitive intentionally freezes for mouse
+    // double-click inspection. Keyboard stepping has a different contract:
+    // retain the state the learner had immediately before pressing the key.
+    stepBeat(dir)
+    if (wasPlaying && video) {
+      void video.play().catch(() => undefined)
+    }
+  }
+
   const toggleFullscreen = () => {
     const el = containerRef.current
     if (!el) return
@@ -175,8 +188,8 @@ export default function VideoPlayer({
       className="relative w-full aspect-video bg-black rounded-xl overflow-hidden"
       role="region"
       tabIndex={0}
-      aria-label="视频播放区：单击播放或暂停；双击左侧上一拍、中间全屏、右侧下一拍；按问号查看全部快捷键"
-      title="单击播放/暂停 · 双击逐拍/全屏 · 按 ? 查看全部快捷键"
+      aria-label="视频播放区：单击播放或暂停；双击左侧上一拍、中间全屏、右侧下一拍；键盘逐拍保持原播放状态；按问号查看全部快捷键"
+      title="单击播放/暂停 · 双击逐拍定格/全屏 · 键盘逐拍保持播放状态 · 按 ? 查看全部快捷键"
       onClick={schedulePlaybackToggle}
       // Physical LEFT / CENTRE / RIGHT thirds keep the gesture independent of
       // video mirroring: previous beat / fullscreen / next beat.
@@ -214,10 +227,10 @@ export default function VideoPlayer({
           onAdjustPlaybackRate?.(1)
         } else if (e.code === 'Comma' || key === ',' || key === '，') {
           e.preventDefault()
-          stepBeat?.(-1)
+          stepBeatFromKeyboard(-1)
         } else if (e.code === 'Period' || key === '.' || key === '。') {
           e.preventDefault()
-          stepBeat?.(1)
+          stepBeatFromKeyboard(1)
         } else if (
           (e.shiftKey && key === 'arrowleft') ||
           (!e.shiftKey && (e.code === 'BracketLeft' || key === '[' || key === '【'))
@@ -232,10 +245,10 @@ export default function VideoPlayer({
           onNextSegment?.()
         } else if (key === 'arrowleft') {
           e.preventDefault()
-          stepBeat?.(-1)
+          stepBeatFromKeyboard(-1)
         } else if (key === 'arrowright') {
           e.preventDefault()
-          stepBeat?.(1)
+          stepBeatFromKeyboard(1)
         } else if (e.code === 'Minus' || e.code === 'NumpadSubtract' || key === '-') {
           e.preventDefault()
           onAdjustPlaybackRate?.(-1)

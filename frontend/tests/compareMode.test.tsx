@@ -33,6 +33,10 @@ const seg = (i: number, start: number, end: number): Segment => ({
 })
 
 // ---- media mocks ----------------------------------------------------------
+let deferRecorderStop = false
+let pendingRecorderStops: Array<() => void> = []
+const mediaRecorderInstances: MockMediaRecorder[] = []
+
 class MockMediaRecorder {
   state: 'inactive' | 'recording' = 'inactive'
   mimeType: string
@@ -40,6 +44,7 @@ class MockMediaRecorder {
   onstop: (() => void) | null = null
   constructor(_stream: MediaStream, opts?: { mimeType?: string }) {
     this.mimeType = opts?.mimeType ?? 'video/webm'
+    mediaRecorderInstances.push(this)
   }
   start() {
     this.state = 'recording'
@@ -47,7 +52,8 @@ class MockMediaRecorder {
   stop() {
     if (this.state === 'inactive') return
     this.state = 'inactive'
-    this.onstop?.()
+    if (deferRecorderStop) pendingRecorderStops.push(() => this.onstop?.())
+    else this.onstop?.()
   }
   static isTypeSupported = () => true
 }
@@ -57,7 +63,10 @@ let realCaf: typeof cancelAnimationFrame
 let realMediaRecorder: unknown
 let realCreateObjectURL: typeof URL.createObjectURL
 let realRevokeObjectURL: typeof URL.revokeObjectURL
+let createObjectURLSpy: ReturnType<typeof vi.fn>
 let canvasAddTrackSpy: ReturnType<typeof vi.fn>
+let canvasVideoTrackStopSpy: ReturnType<typeof vi.fn>
+const CAMERA_STORAGE_KEY = 'dance-teacher:camera-device:v1'
 let ctxStub: {
   fillStyle: string
   font: string
@@ -103,7 +112,12 @@ beforeAll(() => {
     HTMLCanvasElement.prototype as unknown as { captureStream: () => unknown }
   ).captureStream = () => {
     canvasAddTrackSpy = vi.fn()
-    return ({ addTrack: canvasAddTrackSpy, getAudioTracks: () => [] }) as unknown as MediaStream
+    canvasVideoTrackStopSpy = vi.fn()
+    return ({
+      addTrack: canvasAddTrackSpy,
+      getAudioTracks: () => [],
+      getVideoTracks: () => [{ stop: canvasVideoTrackStopSpy }],
+    }) as unknown as MediaStream
   }
 
   ;(window.HTMLMediaElement.prototype as unknown as { play: () => Promise<void> }).play =
@@ -113,7 +127,8 @@ beforeAll(() => {
 
   realCreateObjectURL = URL.createObjectURL
   realRevokeObjectURL = URL.revokeObjectURL
-  URL.createObjectURL = () => 'blob:mock'
+  createObjectURLSpy = vi.fn(() => 'blob:mock')
+  URL.createObjectURL = createObjectURLSpy as typeof URL.createObjectURL
   URL.revokeObjectURL = () => {}
 
   if (!window.matchMedia) {
@@ -131,6 +146,11 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  deferRecorderStop = false
+  pendingRecorderStops = []
+  mediaRecorderInstances.length = 0
+  createObjectURLSpy.mockClear()
+  localStorage.removeItem(CAMERA_STORAGE_KEY)
   comparisonAudioMock.cleanup.mockClear()
   comparisonAudioMock.play.mockReset()
   comparisonAudioMock.play.mockResolvedValue(undefined)
@@ -169,6 +189,101 @@ function mockCamera(resolved: boolean) {
     },
   })
   return track
+}
+
+function mockCameraRig() {
+  type FakeDevice = {
+    deviceId: string
+    groupId: string
+    kind: MediaDeviceKind
+    label: string
+    toJSON: () => object
+  }
+  type FakeTrack = {
+    stop: ReturnType<typeof vi.fn>
+    getSettings: () => MediaTrackSettings
+  }
+  type FakeStream = MediaStream & { fakeTrack: FakeTrack; fakeDeviceId: string }
+
+  let devices: FakeDevice[] = [
+    {
+      deviceId: 'mac-camera',
+      groupId: 'mac',
+      kind: 'videoinput',
+      label: 'FaceTime HD Camera',
+      toJSON: () => ({}),
+    },
+    {
+      deviceId: 'iphone-camera',
+      groupId: 'iphone',
+      kind: 'videoinput',
+      label: 'Qiyue 的 iPhone 摄像头',
+      toJSON: () => ({}),
+    },
+    {
+      deviceId: 'microphone',
+      groupId: 'audio',
+      kind: 'audioinput',
+      label: 'MacBook Microphone',
+      toJSON: () => ({}),
+    },
+  ]
+  const streams: FakeStream[] = []
+  const listeners = new Set<EventListener>()
+  const getUserMedia = vi.fn(async (constraints: MediaStreamConstraints) => {
+    const video = constraints.video as MediaTrackConstraints
+    const exact = (video.deviceId as ConstrainDOMStringParameters | undefined)?.exact
+    const requestedId =
+      typeof exact === 'string'
+        ? exact
+        : devices.find((device) => device.kind === 'videoinput')?.deviceId
+    const match = devices.find(
+      (device) => device.kind === 'videoinput' && device.deviceId === requestedId,
+    )
+    if (!match) {
+      throw Object.assign(new Error('camera not found'), { name: 'NotFoundError' })
+    }
+    const fakeTrack: FakeTrack = {
+      stop: vi.fn(),
+      getSettings: () => ({ deviceId: match.deviceId }),
+    }
+    const stream = {
+      fakeTrack,
+      fakeDeviceId: match.deviceId,
+      getTracks: () => [fakeTrack],
+      getVideoTracks: () => [fakeTrack],
+      getAudioTracks: () => [],
+    } as unknown as FakeStream
+    streams.push(stream)
+    return stream
+  })
+  const enumerateDevices = vi.fn(async () => devices as MediaDeviceInfo[])
+
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: {
+      getUserMedia,
+      enumerateDevices,
+      addEventListener: (type: string, listener: EventListener) => {
+        if (type === 'devicechange') listeners.add(listener)
+      },
+      removeEventListener: (type: string, listener: EventListener) => {
+        if (type === 'devicechange') listeners.delete(listener)
+      },
+    },
+  })
+
+  return {
+    getUserMedia,
+    enumerateDevices,
+    streams,
+    setDevices(next: FakeDevice[]) {
+      devices = next
+    },
+    dispatchDeviceChange() {
+      listeners.forEach((listener) => listener(new Event('devicechange')))
+    },
+  }
 }
 
 // ---- render helpers -------------------------------------------------------
@@ -238,13 +353,194 @@ describe('compare utils', () => {
     expect(compareFileName('a/b:c*?', 1)).toBe('对比-小节1-a_b_c_.webm')
   })
 
-  it('pickMimeType returns a supported webm type', () => {
-    expect(pickMimeType()).toContain('webm')
+  it('pickMimeType prefers lightweight VP8 recording over CPU-heavy VP9', () => {
+    expect(pickMimeType()).toBe('video/webm;codecs=vp8,opus')
   })
 })
 
 // ---- component ------------------------------------------------------------
 describe('CompareMode', () => {
+  it('lists every available video camera after permission is granted', async () => {
+    const rig = mockCameraRig()
+    const { container, unmount } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+
+    const cameraSelect = container.querySelector(
+      'select[aria-label="选择摄像头"]',
+    ) as HTMLSelectElement
+    expect(cameraSelect).not.toBeNull()
+    expect(Array.from(cameraSelect.options).map((option) => option.textContent)).toEqual([
+      '系统默认摄像头',
+      'FaceTime HD Camera',
+      'Qiyue 的 iPhone 摄像头',
+    ])
+    expect(rig.enumerateDevices).toHaveBeenCalled()
+    unmount()
+  })
+
+  it('still lets the learner choose an iPhone when the default camera is busy', async () => {
+    const rig = mockCameraRig()
+    const openCamera = rig.getUserMedia.getMockImplementation()!
+    rig.getUserMedia.mockImplementation(async (constraints: MediaStreamConstraints) => {
+      const video = constraints.video as MediaTrackConstraints
+      const exact = (video.deviceId as ConstrainDOMStringParameters | undefined)?.exact
+      if (!exact) {
+        throw Object.assign(new Error('Could not start video source'), {
+          name: 'NotReadableError',
+        })
+      }
+      return openCamera(constraints)
+    })
+
+    const { container, unmount } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+
+    expect(container.textContent).toContain('Could not start video source')
+    const cameraSelect = container.querySelector(
+      'select[aria-label="选择摄像头"]',
+    ) as HTMLSelectElement
+    expect(Array.from(cameraSelect.options).map((option) => option.textContent)).toContain(
+      'Qiyue 的 iPhone 摄像头',
+    )
+    act(() => {
+      cameraSelect.value = 'iphone-camera'
+      cameraSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await act(async () => findButton('重试此摄像头', container)!.click())
+    await flush()
+
+    expect(rig.getUserMedia).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        video: expect.objectContaining({ deviceId: { exact: 'iphone-camera' } }),
+      }),
+    )
+    expect(findButton('开始录制', container)).toBeTruthy()
+    unmount()
+  })
+
+  it('switches to an iPhone by exact device id and remembers the choice', async () => {
+    const rig = mockCameraRig()
+    const { container, unmount } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+
+    const cameraSelect = container.querySelector(
+      'select[aria-label="选择摄像头"]',
+    ) as HTMLSelectElement
+    await act(async () => {
+      cameraSelect.value = 'iphone-camera'
+      cameraSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await flush()
+
+    expect(rig.getUserMedia).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        video: expect.objectContaining({
+          deviceId: { exact: 'iphone-camera' },
+          width: { ideal: 960 },
+          height: { ideal: 540 },
+          frameRate: { ideal: 30 },
+        }),
+      }),
+    )
+    expect(rig.streams[0].fakeTrack.stop).toHaveBeenCalled()
+    expect(localStorage.getItem(CAMERA_STORAGE_KEY)).toBe('iphone-camera')
+    expect(cameraSelect.value).toBe('iphone-camera')
+    unmount()
+  })
+
+  it('restores the saved camera the next time compare mode opens', async () => {
+    localStorage.setItem(CAMERA_STORAGE_KEY, 'iphone-camera')
+    const rig = mockCameraRig()
+    const { container, unmount } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+
+    expect(rig.getUserMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        video: expect.objectContaining({ deviceId: { exact: 'iphone-camera' } }),
+      }),
+    )
+    const cameraSelect = container.querySelector(
+      'select[aria-label="选择摄像头"]',
+    ) as HTMLSelectElement
+    expect(cameraSelect.value).toBe('iphone-camera')
+    unmount()
+  })
+
+  it('falls back to the default camera when the selected iPhone disconnects', async () => {
+    const rig = mockCameraRig()
+    const { container, unmount } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+    const cameraSelect = container.querySelector(
+      'select[aria-label="选择摄像头"]',
+    ) as HTMLSelectElement
+    await act(async () => {
+      cameraSelect.value = 'iphone-camera'
+      cameraSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await flush()
+
+    rig.setDevices([
+      {
+        deviceId: 'mac-camera',
+        groupId: 'mac',
+        kind: 'videoinput',
+        label: 'FaceTime HD Camera',
+        toJSON: () => ({}),
+      },
+    ])
+    await act(async () => rig.dispatchDeviceChange())
+    await flush()
+
+    expect(rig.getUserMedia).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        video: expect.not.objectContaining({ deviceId: expect.anything() }),
+      }),
+    )
+    expect(cameraSelect.value).toBe('')
+    expect(localStorage.getItem(CAMERA_STORAGE_KEY)).toBeNull()
+    unmount()
+  })
+
   it('shows the start button once the camera is granted', async () => {
     mockCamera(true)
     mount({
@@ -365,6 +661,7 @@ describe('CompareMode', () => {
 
     const a = container.querySelector('a[download="对比-小节3-my_lesson.webm"]')
     expect(a).not.toBeNull()
+    expect(canvasVideoTrackStopSpy).toHaveBeenCalled()
   })
 
   it('draws the live beat counter into the same canvas that becomes the recording', async () => {
@@ -401,6 +698,51 @@ describe('CompareMode', () => {
     globalThis.requestAnimationFrame = previousRaf
   })
 
+  it('caps the expensive two-video canvas paint loop at 30 frames per second', async () => {
+    mockCamera(true)
+    let frame: FrameRequestCallback | null = null
+    const previousRaf = globalThis.requestAnimationFrame
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      frame = callback
+      return 1
+    }) as typeof requestAnimationFrame
+    ctxStub.drawImage.mockClear()
+
+    const { container, teacherVideoRef, unmount } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+    const camera = container.querySelector(
+      '[data-testid="compare-panel"] video',
+    ) as HTMLVideoElement
+    Object.defineProperty(teacherVideoRef.current!, 'videoWidth', {
+      configurable: true,
+      value: 640,
+    })
+    Object.defineProperty(teacherVideoRef.current!, 'videoHeight', {
+      configurable: true,
+      value: 360,
+    })
+    Object.defineProperty(camera, 'videoWidth', { configurable: true, value: 640 })
+    Object.defineProperty(camera, 'videoHeight', { configurable: true, value: 360 })
+
+    act(() => frame?.(0))
+    expect(ctxStub.drawImage).toHaveBeenCalledTimes(2)
+    act(() => frame?.(10))
+    expect(ctxStub.drawImage).toHaveBeenCalledTimes(2)
+    act(() => frame?.(34))
+    expect(ctxStub.drawImage).toHaveBeenCalledTimes(4)
+
+    unmount()
+    globalThis.requestAnimationFrame = previousRaf
+  })
+
   it('adds the shared teacher + count-command audio mix to the recorded canvas stream', async () => {
     mockCamera(true)
     const { container, teacherVideoRef } = mount({
@@ -422,6 +764,121 @@ describe('CompareMode', () => {
     await act(async () => findButton('停止录制', container)!.click())
     await flush()
     expect(comparisonAudioMock.cleanup).toHaveBeenCalled()
+  })
+
+  it('ignores a late MediaRecorder stop event after exiting comparison mode', async () => {
+    mockCamera(true)
+    const { container, unmount } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+
+    await act(async () => findButton('开始录制', container)!.click())
+    await flush()
+    deferRecorderStop = true
+    unmount()
+    expect(pendingRecorderStops).toHaveLength(1)
+
+    await act(async () => pendingRecorderStops.shift()?.())
+    await flush()
+    expect(createObjectURLSpy).not.toHaveBeenCalled()
+    expect(canvasVideoTrackStopSpy).toHaveBeenCalled()
+    expect(comparisonAudioMock.cleanup).toHaveBeenCalled()
+  })
+
+  it('locks duplicate starts and cancels an audio setup that finishes after exit', async () => {
+    mockCamera(true)
+    let resolveAudio!: (value: {
+      track: MediaStreamTrack
+      cleanup: () => void
+    }) => void
+    comparisonAudioMock.prepare.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveAudio = resolve
+        }),
+    )
+    const { container, unmount } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+
+    const start = findButton('开始录制', container)!
+    act(() => {
+      start.click()
+      start.click()
+    })
+    expect(comparisonAudioMock.prepare).toHaveBeenCalledTimes(1)
+    unmount()
+    expect(canvasVideoTrackStopSpy).toHaveBeenCalled()
+
+    await act(async () => {
+      resolveAudio({
+        track: comparisonAudioMock.track,
+        cleanup: comparisonAudioMock.cleanup,
+      })
+      await Promise.resolve()
+    })
+    await flush()
+    expect(mediaRecorderInstances).toHaveLength(0)
+    expect(comparisonAudioMock.cleanup).toHaveBeenCalled()
+    expect(createObjectURLSpy).not.toHaveBeenCalled()
+  })
+
+  it('does not start the elapsed timer if playback resolves after recording was stopped', async () => {
+    mockCamera(true)
+    let resolveTeacherPlay!: () => void
+    const priorPlay = window.HTMLMediaElement.prototype.play
+    const playSpy = vi
+      .spyOn(window.HTMLMediaElement.prototype, 'play')
+      .mockImplementation(function (this: HTMLMediaElement) {
+        if ((this as HTMLElement).dataset.testid === 'teacher-video') {
+          return new Promise<void>((resolve) => {
+            resolveTeacherPlay = resolve
+          })
+        }
+        return Promise.resolve()
+      })
+    const intervalSpy = vi.spyOn(window, 'setInterval')
+    const { container, unmount } = mount({
+      open: true,
+      onClose: () => {},
+      src: '/video/abc',
+      segment: seg(3, 8, 12),
+      segmentIndex: 3,
+      mirror: true,
+      videoName: 'my lesson',
+    })
+    await flush()
+
+    act(() => findButton('开始录制', container)!.click())
+    await flush()
+    expect(findButton('停止录制', container)).toBeTruthy()
+    act(() => findButton('停止录制', container)!.click())
+    await flush()
+
+    await act(async () => {
+      resolveTeacherPlay()
+      await Promise.resolve()
+    })
+    expect(intervalSpy).not.toHaveBeenCalled()
+
+    unmount()
+    intervalSpy.mockRestore()
+    playSpy.mockRestore()
+    window.HTMLMediaElement.prototype.play = priorPlay
   })
 
   it('replays the first count when recording starts on an already-selected beat', async () => {
@@ -500,10 +957,12 @@ describe('CompareMode', () => {
       expect(m, 'recording badge should be on screen').not.toBeNull()
       return parseFloat(m![1])
     }
-    // Badge starts at zero...
-    expect(elapsedOf()).toBe(0)
+    // Capture the initial reading instead of requiring an exact wall-clock
+    // value: a busy full-suite run may let one or more 200 ms ticks fire first.
+    const initialElapsed = elapsedOf()
+    expect(initialElapsed).toBeLessThan(1)
 
-    // ...and advances on its own. The interval ticks every 100ms, so a 250ms
+    // ...and advances on its own. The interval ticks every 200ms, so a 250ms
     // window is enough to see it move. (Regression guard: `timerRef` used to be
     // cleared but never *set*, so the badge was frozen at 0.0s forever — which
     // now matters much more since recordings run for minutes, not one bar.)
@@ -511,7 +970,7 @@ describe('CompareMode', () => {
     await act(async () => {
       await new Promise((r) => setTimeout(r, 250))
     })
-    expect(elapsedOf()).toBeGreaterThan(0)
+    expect(elapsedOf()).toBeGreaterThan(initialElapsed)
 
     // Stopping tears the interval down so it cannot leak past the recording.
     await act(async () => {

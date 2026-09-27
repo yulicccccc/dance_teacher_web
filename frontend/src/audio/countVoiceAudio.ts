@@ -218,10 +218,34 @@ export async function prepareComparisonAudio(
     teacherStream = undefined
   }
 
+  const stoppedTeacherTracks = new Set<MediaStreamTrack>()
+  const stopTeacherTracks = (tracks: MediaStreamTrack[]) => {
+    for (const mediaTrack of tracks) {
+      if (stoppedTeacherTracks.has(mediaTrack)) continue
+      stoppedTeacherTracks.add(mediaTrack)
+      try {
+        mediaTrack.stop()
+      } catch {
+        /* already stopped */
+      }
+    }
+  }
+  const releaseTeacherStream = () => {
+    const allTracks = teacherStream?.getTracks?.()
+    stopTeacherTracks(allTracks ?? teacherStream?.getAudioTracks?.() ?? [])
+  }
+  // The Web Audio source only needs audio. Leaving captureStream's duplicate
+  // video track alive adds a second teacher-video pipeline during recording.
+  stopTeacherTracks(teacherStream?.getVideoTracks?.() ?? [])
+
   const audioContext = getAudioContext()
   if (!audioContext) {
     const directTrack = teacherStream?.getAudioTracks?.()[0]
-    return directTrack ? { track: directTrack, cleanup: () => undefined } : null
+    if (!directTrack) {
+      releaseTeacherStream()
+      return null
+    }
+    return { track: directTrack, cleanup: releaseTeacherStream }
   }
 
   await resume(audioContext)
@@ -238,6 +262,7 @@ export async function prepareComparisonAudio(
   const track = destination.stream.getAudioTracks()[0]
   if (!track) {
     teacherSource?.disconnect()
+    releaseTeacherStream()
     return null
   }
   return {
@@ -248,6 +273,7 @@ export async function prepareComparisonAudio(
       } catch {
         /* already disconnected */
       }
+      releaseTeacherStream()
     },
   }
 }

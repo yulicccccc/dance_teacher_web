@@ -4,6 +4,7 @@ import {
   Button,
   IconButton,
   Stack,
+  TextField,
   Tooltip,
   Typography,
 } from '@mui/material'
@@ -27,6 +28,52 @@ type Phase = 'loading' | 'denied' | 'ready' | 'recording' | 'review' | 'unsuppor
 const CANVAS_W = 1280
 const CANVAS_H = 720
 const HALF_W = CANVAS_W / 2
+const COMPOSITE_FPS = 30
+const COMPOSITE_FRAME_MS = 1000 / COMPOSITE_FPS
+export const CAMERA_STORAGE_KEY = 'dance-teacher:camera-device:v1'
+
+interface CameraChoice {
+  deviceId: string
+  label: string
+}
+
+function readPreferredCamera(): string {
+  try {
+    return window.localStorage.getItem(CAMERA_STORAGE_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function cameraConstraints(deviceId: string): MediaTrackConstraints {
+  return {
+    ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user' }),
+    // Each camera occupies only half of a 1280×720 canvas (normally 640×360
+    // for a 16:9 source). Asking Continuity Camera for 1080p/60 wastes Wi-Fi,
+    // decode and scaling work without adding visible detail to the result.
+    width: { ideal: 960 },
+    height: { ideal: 540 },
+    frameRate: { ideal: COMPOSITE_FPS },
+  }
+}
+
+function cameraError(err: unknown): { name?: string; message: string } {
+  return {
+    name: (err as { name?: string })?.name,
+    message: (err as { message?: string })?.message ?? String(err),
+  }
+}
+
+function mayFallBackToDefault(name?: string): boolean {
+  return name !== 'NotAllowedError' && name !== 'SecurityError'
+}
+
+function requestCameraStream(deviceId: string): Promise<MediaStream> {
+  return navigator.mediaDevices.getUserMedia({
+    video: cameraConstraints(deviceId),
+    audio: false,
+  })
+}
 
 interface Props {
   /** Whether the split-screen comparison is active (drives the camera lifecycle). */
@@ -139,6 +186,11 @@ export default function CompareMode({
   const [errorMsg, setErrorMsg] = useState('')
   const [reviewMirrored, setReviewMirrored] = useState(false)
   const [recordedMirror, setRecordedMirror] = useState(mirror)
+  const [cameraDevices, setCameraDevices] = useState<CameraChoice[]>([])
+  const [selectedCameraId, setSelectedCameraId] = useState(readPreferredCamera)
+  const [cameraBusy, setCameraBusy] = useState(false)
+  const [cameraNotice, setCameraNotice] = useState('')
+  const [cameraRetryToken, setCameraRetryToken] = useState(0)
 
   // Playback speed is owned by the control bar (store) — the comparison simply
   // records at whatever speed the learner picked on the slider.
@@ -151,12 +203,19 @@ export default function CompareMode({
   const recorderRef = useRef<MediaRecorder | null>(null)
   const rafRef = useRef<number | null>(null)
   const timerRef = useRef<number | null>(null)
+  const lastPaintTsRef = useRef<number | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const urlRef = useRef<string | null>(null)
   const startTsRef = useRef<number>(0)
   const audioMixCleanupRef = useRef<(() => void) | null>(null)
   const isRecordingRef = useRef(false)
   const recordingMirrorRef = useRef(mirror)
+  const recordingGenerationRef = useRef(0)
+  const startingRecordingRef = useRef(false)
+  const cameraRequestRef = useRef(0)
+  const selectedCameraIdRef = useRef(selectedCameraId)
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
 
   // Refs mirroring mutable values so stable callbacks read fresh data.
   const segRef = useRef<Segment | null>(segment)
@@ -169,6 +228,88 @@ export default function CompareMode({
   mirrorRef.current = mirror
   const beatRef = useRef({ beatIndex, pulse, beatMirror })
   beatRef.current = { beatIndex, pulse, beatMirror }
+
+  const rememberCamera = useCallback((deviceId: string) => {
+    selectedCameraIdRef.current = deviceId
+    setSelectedCameraId(deviceId)
+    try {
+      if (deviceId) window.localStorage.setItem(CAMERA_STORAGE_KEY, deviceId)
+      else window.localStorage.removeItem(CAMERA_STORAGE_KEY)
+    } catch {
+      // Private browsing can disable storage; camera switching still works.
+    }
+  }, [])
+
+  const refreshCameraDevices = useCallback(async (): Promise<CameraChoice[]> => {
+    const enumerate = navigator.mediaDevices?.enumerateDevices
+    if (typeof enumerate !== 'function') {
+      setCameraDevices([])
+      return []
+    }
+    try {
+      const devices = await enumerate.call(navigator.mediaDevices)
+      const choices = devices
+        .filter((device) => device.kind === 'videoinput')
+        .map((device, index) => ({
+          deviceId: device.deviceId,
+          label: device.label || `摄像头 ${index + 1}`,
+        }))
+      setCameraDevices(choices)
+      return choices
+    } catch {
+      setCameraDevices([])
+      return []
+    }
+  }, [])
+
+  const replaceCameraStream = useCallback((stream: MediaStream): boolean => {
+    const cam = cameraRef.current
+    if (!cam) {
+      stream.getTracks().forEach((track) => track.stop())
+      return false
+    }
+    const previous = streamRef.current
+    streamRef.current = stream
+    cam.srcObject = stream
+    void cam.play().catch(() => undefined)
+    if (previous && previous !== stream) {
+      previous.getTracks().forEach((track) => track.stop())
+    }
+    return true
+  }, [])
+
+  const stopCameraStream = useCallback(() => {
+    const active = streamRef.current
+    streamRef.current = null
+    active?.getTracks().forEach((track) => track.stop())
+    const cam = cameraRef.current
+    if (cam) cam.srcObject = null
+  }, [])
+
+  const switchCamera = useCallback(
+    async (deviceId: string) => {
+      const requestId = ++cameraRequestRef.current
+      setCameraBusy(true)
+      setCameraNotice('')
+      try {
+        const stream = await requestCameraStream(deviceId)
+        if (requestId !== cameraRequestRef.current) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
+        if (!replaceCameraStream(stream)) return
+        rememberCamera(deviceId)
+        await refreshCameraDevices()
+      } catch (err) {
+        if (requestId !== cameraRequestRef.current) return
+        const { message } = cameraError(err)
+        setCameraNotice(`无法切换摄像头，继续使用原摄像头：${message}`)
+      } finally {
+        if (requestId === cameraRequestRef.current) setCameraBusy(false)
+      }
+    },
+    [refreshCameraDevices, rememberCamera, replaceCameraStream],
+  )
 
   // ---- stop helpers --------------------------------------------------------
   const stopRecorder = useCallback(() => {
@@ -187,6 +328,7 @@ export default function CompareMode({
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
     }
+    lastPaintTsRef.current = null
     if (timerRef.current != null) {
       clearInterval(timerRef.current)
       timerRef.current = null
@@ -196,27 +338,23 @@ export default function CompareMode({
   }, [teacherVideoRef])
 
   const stopEverything = useCallback(() => {
+    cameraRequestRef.current += 1
+    // Invalidate both an active recorder and a start that may still be waiting
+    // for Web Audio. A late promise/onstop callback can release its own tracks,
+    // but must not create a Blob or update React state after this panel exits.
+    recordingGenerationRef.current += 1
+    startingRecordingRef.current = false
     stopLive()
     stopRecorder()
     recorderRef.current = null
-    const cam = cameraRef.current
-    if (cam && cam.srcObject) {
-      ;(cam.srcObject as MediaStream).getTracks().forEach((t) => t.stop())
-      cam.srcObject = null
-    }
-    // Also stop the tracks through our own handle: this panel is unmounted when
-    // the learner leaves compare mode, so by the time the effect cleanup runs
-    // `cameraRef.current` may already be null — without this the camera would
-    // keep its indicator light on.
-    streamRef.current?.getTracks().forEach((t) => t.stop())
-    streamRef.current = null
+    stopCameraStream()
     audioMixCleanupRef.current?.()
     audioMixCleanupRef.current = null
     isRecordingRef.current = false
     // NOTE: the teacher <video> belongs to the PAGE (it is the main player), so
     // we only pause it above. Clearing its `src`/calling load() here — as the
     // old modal-owned teacher video did — would tear down the main player.
-  }, [stopLive, stopRecorder])
+  }, [stopCameraStream, stopLive, stopRecorder])
 
   // Continuous side-by-side preview (runs while the panel is open).
   //
@@ -224,11 +362,23 @@ export default function CompareMode({
   // a phrase over and over and stops when THEY are done, so this loop only
   // paints. (The old per-frame `maybeStop()` auto-stop check, and its
   // `timeupdate` twin in start/stopRecording, were removed together.)
-  const draw = useCallback(() => {
+  const draw = useCallback((frameTime: number) => {
+    const previousPaint = lastPaintTsRef.current
+    if (
+      previousPaint !== null &&
+      frameTime - previousPaint < COMPOSITE_FRAME_MS
+    ) {
+      rafRef.current = requestAnimationFrame(draw)
+      return
+    }
+    lastPaintTsRef.current = frameTime
     const canvas = canvasRef.current
     const tv = teacherVideoRef.current
     const cam = cameraRef.current
-    const ctx = canvas?.getContext('2d')
+    const ctx = canvas?.getContext('2d', {
+      alpha: false,
+      desynchronized: true,
+    })
     if (ctx && tv && cam) {
       ctx.fillStyle = '#000'
       ctx.fillRect(0, 0, CANVAS_W, CANVAS_H)
@@ -253,9 +403,19 @@ export default function CompareMode({
 
   // ---- start / stop recording ---------------------------------------------
   const startRecording = useCallback(async () => {
+    if (
+      startingRecordingRef.current ||
+      recorderRef.current ||
+      phaseRef.current !== 'ready'
+    ) {
+      return
+    }
     const tv = teacherVideoRef.current
     const canvas = canvasRef.current
     if (!tv || !canvas || !segRef.current) return
+
+    const operationId = ++recordingGenerationRef.current
+    startingRecordingRef.current = true
 
     let canvasStream: MediaStream
     try {
@@ -263,24 +423,55 @@ export default function CompareMode({
         captureStream: (fps?: number) => MediaStream
       }).captureStream(30)
     } catch {
-      setErrorMsg('当前浏览器不支持 canvas 录制（captureStream 不可用）')
-      setPhase('unsupported')
+      if (operationId === recordingGenerationRef.current) {
+        setErrorMsg('当前浏览器不支持 canvas 录制（captureStream 不可用）')
+        setPhase('unsupported')
+        startingRecordingRef.current = false
+      }
       return
+    }
+
+    let audioCleanup: (() => void) | null = null
+    let captureCleaned = false
+    const cleanupCapture = () => {
+      if (captureCleaned) return
+      captureCleaned = true
+      canvasStream.getVideoTracks?.().forEach((track) => track.stop())
+      audioCleanup?.()
+      audioCleanup = null
+      if (audioMixCleanupRef.current === cleanupCapture) {
+        audioMixCleanupRef.current = null
+      }
     }
 
     // One Web Audio destination mixes the teacher track with the exact same
     // 1–8 samples heard during practice, so the downloaded file keeps both.
     audioMixCleanupRef.current?.()
-    audioMixCleanupRef.current = null
+    audioMixCleanupRef.current = cleanupCapture
     try {
       const audioMix = await prepareComparisonAudio(tv)
+      if (operationId !== recordingGenerationRef.current) {
+        // `cleanupCapture` may already have run while the promise was pending,
+        // so release this newly-arrived audio graph explicitly as well.
+        audioMix?.cleanup()
+        cleanupCapture()
+        return
+      }
       if (audioMix) {
-        canvasStream.addTrack(audioMix.track)
-        audioMixCleanupRef.current = audioMix.cleanup
+        try {
+          canvasStream.addTrack(audioMix.track)
+          audioCleanup = audioMix.cleanup
+        } catch {
+          audioMix.cleanup()
+        }
       }
     } catch {
       // Audio is additive: a browser audio-capture failure must not block the
       // learner from recording the visual comparison.
+    }
+    if (operationId !== recordingGenerationRef.current) {
+      cleanupCapture()
+      return
     }
 
     const mime = pickMimeType()
@@ -290,22 +481,27 @@ export default function CompareMode({
         ? new MediaRecorder(canvasStream, { mimeType: mime })
         : new MediaRecorder(canvasStream)
     } catch {
-      audioMixCleanupRef.current?.()
-      audioMixCleanupRef.current = null
-      setErrorMsg('当前浏览器不支持 MediaRecorder')
-      setPhase('unsupported')
+      cleanupCapture()
+      if (operationId === recordingGenerationRef.current) {
+        setErrorMsg('当前浏览器不支持 MediaRecorder')
+        setPhase('unsupported')
+        startingRecordingRef.current = false
+      }
       return
     }
 
-    chunksRef.current = []
+    const recordingChunks: Blob[] = []
+    chunksRef.current = recordingChunks
     rec.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
+      if (e.data && e.data.size > 0) recordingChunks.push(e.data)
     }
     rec.onstop = () => {
+      cleanupCapture()
+      if (recorderRef.current === rec) recorderRef.current = null
+      if (operationId !== recordingGenerationRef.current) return
+
       isRecordingRef.current = false
-      audioMixCleanupRef.current?.()
-      audioMixCleanupRef.current = null
-      const blob = new Blob(chunksRef.current, {
+      const blob = new Blob(recordingChunks, {
         type: rec.mimeType || 'video/webm',
       })
       if (urlRef.current) URL.revokeObjectURL(urlRef.current)
@@ -324,7 +520,20 @@ export default function CompareMode({
     tv.playbackRate = playbackRate
     // Start MediaRecorder before playback so the first count after the seek is
     // present in the file instead of escaping during play() startup.
-    rec.start()
+    try {
+      rec.start()
+    } catch {
+      if (recorderRef.current === rec) recorderRef.current = null
+      isRecordingRef.current = false
+      cleanupCapture()
+      if (operationId === recordingGenerationRef.current) {
+        setErrorMsg('无法开始录制，请关闭其他占用摄像头的应用后重试')
+        setPhase('unsupported')
+        startingRecordingRef.current = false
+      }
+      return
+    }
+    startingRecordingRef.current = false
     if (voiceEnabled) {
       // Seeking to a bar that is already displaying its first beat does not
       // change LessonPage's beatIndex, so its normal effect would not replay
@@ -339,13 +548,19 @@ export default function CompareMode({
     } catch {
       /* autoplay hiccup — ignore */
     }
+    if (
+      operationId !== recordingGenerationRef.current ||
+      rec.state === 'inactive'
+    ) {
+      return
+    }
     // Tick the on-canvas "录制中 · x.xs" badge. Wall-clock elapsed (not the
     // teacher's `currentTime`) is what the learner cares about, and it stays
     // honest at any playbackRate. `stopLive` clears this interval on every exit
     // path (manual stop, panel close, unmount).
     timerRef.current = window.setInterval(
       () => setElapsed((Date.now() - startTsRef.current) / 1000),
-      100,
+      200,
     )
   }, [playbackRate, stopLive, teacherVideoRef, voiceEnabled, voiceVolume])
 
@@ -380,6 +595,8 @@ export default function CompareMode({
     if (!open) return
     setPhase('loading')
     setErrorMsg('')
+    setCameraNotice('')
+    setCameraBusy(true)
     setElapsed(0)
 
     const supported =
@@ -387,31 +604,37 @@ export default function CompareMode({
       typeof MediaRecorder !== 'undefined' &&
       typeof HTMLCanvasElement.prototype.captureStream === 'function'
     if (!supported) {
+      setCameraBusy(false)
       setPhase('unsupported')
       return
     }
 
     let cancelled = false
-    navigator.mediaDevices
-      .getUserMedia({
-        video: {
-          facingMode: 'user',
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      })
-      .then((stream) => {
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop())
+    const requestId = ++cameraRequestRef.current
+    const startCamera = async () => {
+      const preferredId = selectedCameraIdRef.current
+      let resolvedId = preferredId
+      let stream: MediaStream
+      try {
+        try {
+          stream = await requestCameraStream(preferredId)
+        } catch (err) {
+          const { name } = cameraError(err)
+          if (!preferredId || !mayFallBackToDefault(name)) throw err
+          resolvedId = ''
+          stream = await requestCameraStream('')
+          rememberCamera('')
+          setCameraNotice('上次使用的摄像头当前不可用，已改用系统默认摄像头')
+        }
+        if (cancelled || requestId !== cameraRequestRef.current) {
+          stream.getTracks().forEach((track) => track.stop())
           return
         }
-        streamRef.current = stream
-        const cam = cameraRef.current
-        if (cam) {
-          cam.srcObject = stream
-          void cam.play().catch(() => undefined)
-        }
+        if (!replaceCameraStream(stream)) return
+        rememberCamera(resolvedId)
+        await refreshCameraDevices()
+        if (cancelled || requestId !== cameraRequestRef.current) return
+
         // The teacher element is the page's own player and already carries
         // `src` — just park its playhead at the start of the segment we are
         // about to compare (the control bar can move it again at any time).
@@ -425,19 +648,27 @@ export default function CompareMode({
           else tv.addEventListener('loadedmetadata', parkAtSegmentStart, { once: true })
         }
         setPhase('ready')
+        setCameraBusy(false)
         rafRef.current = requestAnimationFrame(draw)
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        const name = (err as { name?: string })?.name
-        const message = (err as { message?: string })?.message ?? String(err)
+      } catch (err) {
+        if (cancelled || requestId !== cameraRequestRef.current) return
+        const { name, message } = cameraError(err)
+        // A busy built-in camera (NotReadableError) should not trap the user
+        // on a dead-end error screen. Device labels are available once the
+        // browser has camera permission, so expose the list and let them retry
+        // directly with an iPhone or external camera.
+        await refreshCameraDevices()
+        if (cancelled || requestId !== cameraRequestRef.current) return
         setErrorMsg(
           name === 'NotAllowedError'
             ? '摄像头权限被拒绝，请在浏览器地址栏允许摄像头后重试'
             : `无法访问摄像头：${message}`,
         )
+        setCameraBusy(false)
         setPhase('denied')
-      })
+      }
+    }
+    void startCamera()
 
     return () => {
       cancelled = true
@@ -447,8 +678,40 @@ export default function CompareMode({
         urlRef.current = null
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, src])
+  }, [
+    draw,
+    cameraRetryToken,
+    open,
+    refreshCameraDevices,
+    rememberCamera,
+    replaceCameraStream,
+    src,
+    stopEverything,
+    teacherVideoRef,
+  ])
+
+  // Continuity Camera can appear after the panel is already open. Refresh the
+  // choices automatically, and fall back cleanly if the selected iPhone leaves.
+  useEffect(() => {
+    if (!open) return
+    const mediaDevices = navigator.mediaDevices
+    if (typeof mediaDevices?.addEventListener !== 'function') return
+    const onDeviceChange = () => {
+      void refreshCameraDevices().then((choices) => {
+        const selectedId = selectedCameraIdRef.current
+        if (
+          phaseRef.current === 'ready' &&
+          selectedId &&
+          choices.length > 0 &&
+          !choices.some((choice) => choice.deviceId === selectedId)
+        ) {
+          void switchCamera('')
+        }
+      })
+    }
+    mediaDevices.addEventListener('devicechange', onDeviceChange)
+    return () => mediaDevices.removeEventListener('devicechange', onDeviceChange)
+  }, [open, refreshCameraDevices, switchCamera])
 
   const handleClose = useCallback(() => {
     stopEverything()
@@ -578,6 +841,50 @@ export default function CompareMode({
         useFlexGap
         sx={{ mt: 1.5 }}
       >
+        {(phase === 'ready' || phase === 'recording' || phase === 'denied') && (
+          <>
+            <TextField
+              select
+              size="small"
+              label="摄像头"
+              value={selectedCameraId}
+              disabled={phase === 'recording' || cameraBusy}
+              onChange={(event) => {
+                const deviceId = event.target.value
+                if (phase === 'denied') {
+                  selectedCameraIdRef.current = deviceId
+                  setSelectedCameraId(deviceId)
+                } else {
+                  void switchCamera(deviceId)
+                }
+              }}
+              SelectProps={{ native: true }}
+              inputProps={{ 'aria-label': '选择摄像头' }}
+              sx={{ minWidth: { xs: '100%', sm: 240 } }}
+            >
+              <option value="">系统默认摄像头</option>
+              {cameraDevices.map((device) => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label}
+                </option>
+              ))}
+            </TextField>
+            <Button
+              variant="outlined"
+              disabled={phase === 'recording' || cameraBusy}
+              onClick={() => {
+                if (phase === 'denied') setCameraRetryToken((value) => value + 1)
+                else void refreshCameraDevices()
+              }}
+            >
+              {cameraBusy
+                ? '正在切换…'
+                : phase === 'denied'
+                  ? '重试此摄像头'
+                  : '刷新摄像头'}
+            </Button>
+          </>
+        )}
         {phase === 'ready' && (
           <>
             <Button
@@ -644,8 +951,32 @@ export default function CompareMode({
         </Button>
       </Stack>
 
-      {/* Hidden camera source (the teacher source is the page's own player). */}
-      <video ref={cameraRef} style={{ display: 'none' }} playsInline muted />
+      {cameraNotice && phase === 'ready' && (
+        <Typography variant="caption" color="warning.main" sx={{ display: 'block', mt: 1 }}>
+          {cameraNotice}
+        </Typography>
+      )}
+
+      {/*
+        Keep a tiny rendered sink instead of display:none. Some browsers
+        aggressively throttle decoding of display:none media, which makes a
+        canvas-fed Continuity Camera preview appear choppy.
+      */}
+      <video
+        ref={cameraRef}
+        aria-hidden="true"
+        style={{
+          position: 'fixed',
+          width: 1,
+          height: 1,
+          left: 0,
+          top: 0,
+          opacity: 0.001,
+          pointerEvents: 'none',
+        }}
+        playsInline
+        muted
+      />
     </Box>
   )
 }

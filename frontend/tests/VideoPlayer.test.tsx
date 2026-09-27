@@ -84,6 +84,7 @@ function setup(opts: { mirror: boolean }) {
     container,
     root,
     box,
+    videoRef,
     stepBeat,
     onTogglePlay,
     onPrevSegment,
@@ -272,6 +273,80 @@ describe('VideoPlayer general playback gestures', () => {
     box.appendChild(input)
     keyDown(input, ',', 'Comma')
     expect(stepBeat).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps playing after a keyboard beat step when playback was already running', () => {
+    const { box, videoRef, stepBeat } = setup({ mirror: false })
+    const video = videoRef.current!
+    let paused = false
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      get: () => paused,
+    })
+    const play = vi.fn(() => {
+      paused = false
+      return Promise.resolve()
+    })
+    video.play = play as unknown as HTMLMediaElement['play']
+    // The real useBeatSync step seeks and pauses; VideoPlayer must resume only
+    // for a keyboard request that began while playback was active.
+    stepBeat.mockImplementation(() => {
+      paused = true
+    })
+
+    keyDown(box, ',', 'Comma')
+
+    expect(stepBeat).toHaveBeenCalledWith(-1)
+    expect(play).toHaveBeenCalledTimes(1)
+    expect(video.paused).toBe(false)
+  })
+
+  it('stays paused after a keyboard beat step when playback was paused', () => {
+    const { box, videoRef, stepBeat } = setup({ mirror: false })
+    const video = videoRef.current!
+    let paused = true
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      get: () => paused,
+    })
+    const play = vi.fn(() => {
+      paused = false
+      return Promise.resolve()
+    })
+    video.play = play as unknown as HTMLMediaElement['play']
+    stepBeat.mockImplementation(() => {
+      paused = true
+    })
+
+    keyDown(box, '.', 'Period')
+
+    expect(stepBeat).toHaveBeenCalledWith(1)
+    expect(play).not.toHaveBeenCalled()
+    expect(video.paused).toBe(true)
+  })
+
+  it('keeps the original double-click behavior: jump one beat and freeze', () => {
+    const { box, videoRef, stepBeat } = setup({ mirror: false })
+    const video = videoRef.current!
+    let paused = false
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      get: () => paused,
+    })
+    const play = vi.fn(() => {
+      paused = false
+      return Promise.resolve()
+    })
+    video.play = play as unknown as HTMLMediaElement['play']
+    stepBeat.mockImplementation(() => {
+      paused = true
+    })
+
+    dblClick(box, 50)
+
+    expect(stepBeat).toHaveBeenCalledWith(-1)
+    expect(play).not.toHaveBeenCalled()
+    expect(video.paused).toBe(true)
   })
 
   it('supports section navigation and precise playback-rate shortcuts', () => {

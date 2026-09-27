@@ -90,9 +90,22 @@ describe('shared count-command audio bus', () => {
 
   it('mixes teacher audio into the same single track that carries count commands', async () => {
     const { prepareComparisonAudio } = await import('../src/audio/countVoiceAudio')
-    const teacherTrack = { kind: 'audio', id: 'teacher' } as MediaStreamTrack
+    const stopTeacherAudio = vi.fn()
+    const stopTeacherVideo = vi.fn()
+    const teacherTrack = {
+      kind: 'audio',
+      id: 'teacher',
+      stop: stopTeacherAudio,
+    } as unknown as MediaStreamTrack
+    const teacherVideoTrack = {
+      kind: 'video',
+      id: 'teacher-video',
+      stop: stopTeacherVideo,
+    } as unknown as MediaStreamTrack
     const teacherStream = {
       getAudioTracks: () => [teacherTrack],
+      getVideoTracks: () => [teacherVideoTrack],
+      getTracks: () => [teacherTrack, teacherVideoTrack],
     } as MediaStream
     const teacherVideo = {
       captureStream: () => teacherStream,
@@ -102,8 +115,11 @@ describe('shared count-command audio bus', () => {
     expect(mix?.track).toBe(mixedTrack)
     expect(context.createMediaStreamSource).toHaveBeenCalledWith(teacherStream)
     expect(teacherSource.connect).toHaveBeenCalledWith(mixedDestination)
+    expect(stopTeacherVideo).toHaveBeenCalledTimes(1)
+    expect(stopTeacherAudio).not.toHaveBeenCalled()
     mix?.cleanup()
     expect(teacherSource.disconnect).toHaveBeenCalled()
+    expect(stopTeacherAudio).toHaveBeenCalledTimes(1)
   })
 
   it('synthesizes an accented metronome sound into speakers and recording mix', async () => {
